@@ -36,8 +36,13 @@ defmodule Chat.MixProject do
   defp deps do
     [
       {:syn, "~> 3.3"},
+      # Pure-Erlang instrumentation seam (no transport/web/DB), so the firewall
+      # (`Chat.FirewallTest`) stays green; bodies attach handlers to these events.
+      {:telemetry, "~> 1.1"},
       {:stream_data, "~> 1.0", only: :test},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

@@ -59,6 +59,41 @@ defmodule Chat.Adapters.InMemory.PersistenceTest do
     end
   end
 
+  # ── CP fencing (append/4 — the optional compare-and-set) ────────────────────
+  describe "CP fencing (append/4)" do
+    setup do
+      srv = start_supervised!({Persistence, name: nil})
+      %{srv: srv}
+    end
+
+    test "a matching expected_seq commits the next seq", %{srv: s} do
+      assert {:ok, 1} = Persistence.append(s, "c", msg("m1"), 0)
+      assert {:ok, 2} = Persistence.append(s, "c", msg("m2"), 1)
+    end
+
+    test "a stale expected_seq is fenced with the actual current latest", %{srv: s} do
+      assert {:ok, 1} = Persistence.append(s, "c", msg("m1"), 0)
+      assert {:ok, 2} = Persistence.append(s, "c", msg("m2"), 1)
+      assert {:error, {:fenced, 2}} = Persistence.append(s, "c", msg("m3"), 0)
+    end
+
+    test "idempotency beats fencing: a replayed id returns its seq despite a stale expected", %{
+      srv: s
+    } do
+      assert {:ok, 1} = Persistence.append(s, "c", msg("m1"), 0)
+      assert {:ok, 2} = Persistence.append(s, "c", msg("m2"), 1)
+      # m1 replayed with a now-stale expected_seq ⇒ original seq, NOT a fence error
+      assert {:ok, 1} = Persistence.append(s, "c", msg("m1"), 0)
+    end
+
+    test "two writers racing at the same expected_seq: exactly one wins", %{srv: s} do
+      assert {:ok, 1} = Persistence.append(s, "c", msg("a"), 0)
+      # both owners believe the latest is 1
+      assert {:ok, 2} = Persistence.append(s, "c", msg("b"), 1)
+      assert {:error, {:fenced, 2}} = Persistence.append(s, "c", msg("c"), 1)
+    end
+  end
+
   # ── Property: the crown-jewel guarantee ─────────────────────────────────────
   # For ANY interleaving of appends across conversations, with arbitrary
   # duplicate ids, the adapter must keep per-conversation seqs contiguous and
@@ -67,7 +102,7 @@ defmodule Chat.Adapters.InMemory.PersistenceTest do
     convs = ["c1", "c2", "c3"]
     ids = ["a", "b", "c", "d", "e"]
 
-    check all ops <- list_of(tuple({member_of(convs), member_of(ids)}), max_length: 60) do
+    check all(ops <- list_of(tuple({member_of(convs), member_of(ids)}), max_length: 60)) do
       {:ok, srv} = Persistence.start_link(name: nil)
 
       # expected[conv] = %{next: n, seen: %{id => seq}}

@@ -11,6 +11,7 @@ defmodule Chat.Presence do
   """
   use GenServer
 
+  require Logger
   alias Chat.Envelope
 
   # ── Public API ──────────────────────────────────────────────────────────────
@@ -87,20 +88,31 @@ defmodule Chat.Presence do
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
   defp broadcast(user_id, status, ts) do
-    {:ok, conversations} = Chat.Ports.conversation_store().conversations_for(user_id)
-    env = %Envelope{type: :presence, user_id: user_id, status: status, ts: ts}
+    case Chat.Ports.conversation_store().conversations_for(user_id) do
+      {:ok, conversations} ->
+        env = %Envelope{type: :presence, user_id: user_id, status: status, ts: ts}
 
-    for conv <- conversations, small_enough?(conv) do
-      Chat.Fanout.dispatch(conv, env)
+        for conv <- conversations, small_enough?(conv) do
+          Chat.Fanout.dispatch(conv, env)
+        end
+
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "presence broadcast skipped (conversations_for #{inspect(user_id)} failed): #{inspect(reason)}"
+        )
+
+        :ok
     end
-
-    :ok
   end
 
+  # Fail CLOSED: on a store error treat the conversation as too large to push
+  # presence to, rather than flooding a possibly-huge group on a transient blip.
   defp small_enough?(conversation_id) do
     case Chat.Ports.conversation_store().member_count(conversation_id) do
       {:ok, n} -> n <= Application.get_env(:chat_engine, :presence_max, 100)
-      _ -> true
+      _ -> false
     end
   end
 
@@ -108,4 +120,3 @@ defmodule Chat.Presence do
     :users |> :syn.members(user_id) |> Enum.any?(fn {pid, _} -> pid != dying_pid end)
   end
 end
-

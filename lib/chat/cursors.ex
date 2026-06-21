@@ -10,6 +10,7 @@ defmodule Chat.Cursors do
   *exactly-once in the common case; the reconnect window is at-least-once and
   relies on client dedup by message id (plan Part 10).
   """
+  require Logger
   alias Chat.Types
 
   @type ref :: {Types.user_id(), Types.device_id()}
@@ -17,14 +18,34 @@ defmodule Chat.Cursors do
   @spec get(ref(), Types.conversation_id()) :: Types.seq()
   def get(ref, conversation_id) do
     case Chat.Ports.cursor_store().get(ref, conversation_id) do
-      {:ok, seq} -> seq
-      _ -> 0
+      {:ok, seq} ->
+        seq
+
+      other ->
+        # Fall back to 0 (re-deliver from the start; client dedups by id) but make
+        # the store error visible rather than silently resetting the cursor.
+        Logger.warning(
+          "cursor get failed (ref=#{inspect(ref)} conv=#{inspect(conversation_id)}): #{inspect(other)}"
+        )
+
+        0
     end
   end
 
   @spec advance(ref(), Types.conversation_id(), Types.seq()) :: :ok
   def advance(ref, conversation_id, seq) do
-    Chat.Ports.cursor_store().advance(ref, conversation_id, seq)
-    :ok
+    case Chat.Ports.cursor_store().advance(ref, conversation_id, seq) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        # Delivery progress may be lost (client re-receives on reconnect) — surface
+        # it instead of pretending success.
+        Logger.warning(
+          "cursor advance failed (ref=#{inspect(ref)} conv=#{inspect(conversation_id)} seq=#{inspect(seq)}): #{inspect(reason)}"
+        )
+
+        :ok
+    end
   end
 end

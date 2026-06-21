@@ -34,13 +34,23 @@ defmodule Chat.OneToOneTest do
 
   defp connect(user, label) do
     {:ok, pid} =
-      Session.connect(%{user_id: user, device_id: to_string(label), transport: {TestTransport, {self(), label}}})
+      Session.connect(%{
+        user_id: user,
+        device_id: to_string(label),
+        transport: {TestTransport, {self(), label}}
+      })
 
     pid
   end
 
   defp send_msg(session, conv, id, payload) do
-    Session.handle_inbound(session, %Envelope{type: :send, conversation_id: conv, id: id, payload: payload})
+    Session.handle_inbound(session, %Envelope{
+      type: :send,
+      conversation_id: conv,
+      id: id,
+      payload: payload
+    })
+
     Session.sync(session)
   end
 
@@ -59,7 +69,8 @@ defmodule Chat.OneToOneTest do
                     %Envelope{type: :message, id: "m1", seq: 1, sender_id: "A", payload: "hi B"}}
 
     # A's client: a `delivered` receipt, auto-emitted when B's edge received it
-    assert_receive {:frame, :A, %Envelope{type: :receipt, status: :delivered, seq: 1, sender_id: "B"}}
+    assert_receive {:frame, :A,
+                    %Envelope{type: :receipt, status: :delivered, seq: 1, sender_id: "B"}}
   end
 
   test "seq increases monotonically across a back-and-forth" do
@@ -99,7 +110,10 @@ defmodule Chat.OneToOneTest do
     Session.handle_inbound(b, %Envelope{type: :sync, conversation_id: "c2", seq: 0})
 
     assert_receive {:frame, :B,
-                    %Envelope{type: :sync_page, messages: [%{id: "m1", seq: 1, payload: "you there?"}]}}
+                    %Envelope{
+                      type: :sync_page,
+                      messages: [%{id: "m1", seq: 1, payload: "you there?"}]
+                    }}
   end
 
   test "multi-device: a user's second device also receives the message" do

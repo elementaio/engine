@@ -5,7 +5,14 @@ defmodule Chat.M4Test do
   """
   use ExUnit.Case, async: false
 
-  alias Chat.Adapters.InMemory.{Persistence, ConversationStore, CursorStore, PresenceStore, ReceiptStore}
+  alias Chat.Adapters.InMemory.{
+    Persistence,
+    ConversationStore,
+    CursorStore,
+    PresenceStore,
+    ReceiptStore
+  }
+
   alias Chat.Adapters.TestTransport
   alias Chat.{Envelope, Session}
 
@@ -39,7 +46,13 @@ defmodule Chat.M4Test do
   end
 
   defp send_msg(s, conv, id, payload) do
-    Session.handle_inbound(s, %Envelope{type: :send, conversation_id: conv, id: id, payload: payload})
+    Session.handle_inbound(s, %Envelope{
+      type: :send,
+      conversation_id: conv,
+      id: id,
+      payload: payload
+    })
+
     Session.sync(s)
   end
 
@@ -54,7 +67,10 @@ defmodule Chat.M4Test do
     assert Chat.presence_of("A") == :online
 
     Session.disconnect(a)
-    assert_receive {:frame, :B, %Envelope{type: :presence, user_id: "A", status: :offline, ts: ts}}
+
+    assert_receive {:frame, :B,
+                    %Envelope{type: :presence, user_id: "A", status: :offline, ts: ts}}
+
     assert is_integer(ts)
     assert {:offline, ^ts} = Chat.presence_of("A")
   end

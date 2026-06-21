@@ -77,7 +77,9 @@ defmodule Chat.ClusterTest do
   test "a message from A (node 1) reaches B (node 2)", %{peer_node: peer_node} do
     # A connects here (primary); B connects on the peer. Both transports push
     # frames back to THIS test process (cross-node sends are transparent).
-    {:ok, a} = Session.connect(%{user_id: "A", device_id: "a", transport: {TestTransport, {self(), :A}}})
+    {:ok, a} =
+      Session.connect(%{user_id: "A", device_id: "a", transport: {TestTransport, {self(), :A}}})
+
     :ok = Session.subscribe(a, "C")
 
     {:ok, b} =
@@ -91,13 +93,20 @@ defmodule Chat.ClusterTest do
     Process.sleep(200)
     assert Chat.Fanout.online_count("C") == 2
 
-    Session.handle_inbound(a, %Envelope{type: :send, conversation_id: "C", id: "m1", payload: "cross-node!"})
+    Session.handle_inbound(a, %Envelope{
+      type: :send,
+      conversation_id: "C",
+      id: "m1",
+      payload: "cross-node!"
+    })
 
     assert_receive {:frame, :B, %Envelope{type: :message, id: "m1", payload: "cross-node!"}}, 3000
     assert_receive {:frame, :A, %Envelope{type: :ack, id: "m1", seq: 1}}, 3000
   end
 
-  test "owner placement is balanced across the cluster (rendezvous hashing)", %{peer_node: peer_node} do
+  test "owner placement is balanced across the cluster (rendezvous hashing)", %{
+    peer_node: peer_node
+  } do
     # ~half of conversations should hash to each of the two nodes — and when the
     # node set changes, only ~1/N keys move (HRW), which is what makes rebalancing
     # cheap. Here we just assert both nodes get a real share.

@@ -38,7 +38,7 @@ defmodule Chat do
     announce(conversation_id, :leave, user_id)
 
     for pid <- Chat.Router.sessions_for(user_id) do
-      Chat.Session.unsubscribe(pid, conversation_id)
+      safe_session_call(pid, fn -> Chat.Session.unsubscribe(pid, conversation_id) end)
     end
 
     invalidate_size(conversation_id)
@@ -113,12 +113,22 @@ defmodule Chat do
 
     # Live-subscribe any sessions this user already has connected.
     for pid <- Chat.Router.sessions_for(user_id) do
-      Chat.Session.subscribe(pid, conversation_id)
+      safe_session_call(pid, fn -> Chat.Session.subscribe(pid, conversation_id) end)
     end
 
     invalidate_size(conversation_id)
     if Keyword.get(opts, :announce, false), do: announce(conversation_id, :join, user_id)
     :ok
+  end
+
+  # A session can die between `:syn` listing it and our call (sessions are
+  # ephemeral and churn constantly). A dying device must NOT crash a membership
+  # change for the whole conversation — it will resubscribe on reconnect. Tolerate
+  # the dead-process exit.
+  defp safe_session_call(_pid, fun) do
+    fun.()
+  catch
+    :exit, _ -> :ok
   end
 
   # A live, ephemeral system notification to online members (not persisted in M2).

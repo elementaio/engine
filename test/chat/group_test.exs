@@ -38,7 +38,13 @@ defmodule Chat.GroupTest do
   end
 
   defp send_msg(session, conv, id, payload) do
-    Session.handle_inbound(session, %Envelope{type: :send, conversation_id: conv, id: id, payload: payload})
+    Session.handle_inbound(session, %Envelope{
+      type: :send,
+      conversation_id: conv,
+      id: id,
+      payload: payload
+    })
+
     Session.sync(session)
   end
 

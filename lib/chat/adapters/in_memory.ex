@@ -6,7 +6,13 @@ defmodule Chat.Adapters.InMemory do
   what the multi-node test needs to wire adapters on a peer node. For ordinary
   single-node tests, prefer `start_supervised/1` per adapter.
   """
-  alias Chat.Adapters.InMemory.{ConversationStore, CursorStore, Persistence, PresenceStore, ReceiptStore}
+  alias Chat.Adapters.InMemory.{
+    ConversationStore,
+    CursorStore,
+    Persistence,
+    PresenceStore,
+    ReceiptStore
+  }
 
   @agents [ConversationStore, CursorStore, PresenceStore, ReceiptStore]
   @all [Persistence | @agents]
