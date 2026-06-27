@@ -65,12 +65,38 @@ Control API (in-VM): `Chat.create_conversation/2`, `Chat.add_member/2`, `Chat.me
 `Chat.online?/1`, `Chat.read_state/2`, `Chat.append/2`, `Chat.inject/2`, `Chat.history/3`,
 `Chat.latest_seq/1`.
 
+Health & lifecycle: `Chat.ready?/0` (config valid **and** not draining — wire it to a load-balancer
+probe), `Chat.drain/0` / `Chat.resume/0` (graceful node roll: a draining node refuses NEW sessions with
+`{:error, :draining}` but keeps existing ones running until their clients disconnect).
+
+## Boot-time validation
+
+The engine validates its config at boot (`Chat.Config.validate!/0`, run from `Chat.Application.start/2`):
+every **required** port must be configured, loadable, and actually implement its behaviour, and the
+numeric knobs (`max_payload_bytes`, `max_mailbox`, `presence_max`, `typing_max`) must be positive
+integers. A misconfigured body fails **loudly at boot** rather than with a confusing crash on the first
+message.
+
+## Testing your adapters
+
+The load-bearing port ships an **executable contract test-kit**. Point it at your adapter and it asserts
+the guarantees (idempotency on `id`, monotonic gap-free `seq`, ordered `read_after`, and the optional
+`append/3` CP fence — run automatically when your adapter implements it):
+
+```elixir
+defmodule MyApp.Persistence.ContractTest do
+  use Chat.Persistence.PortTest, adapter: MyApp.Persistence, setup: &MyApp.TestSupport.reset/0
+end
+```
+
 ## Develop
 
 ```sh
 mix deps.get
-mix test                 # includes the firewall + adapter tests
+mix test                 # includes the firewall + adapter + contract-kit tests
 mix test --include distributed   # also the multi-node tests (needs epmd)
+mix credo                # static analysis (CI-gated)
+mix dialyzer             # type checking (CI-gated, separate job)
 mix format
 ```
 

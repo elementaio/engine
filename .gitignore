@@ -8,3 +8,10 @@ erl_crash.dump
 *.beam
 /config/*.secret.exs
 .elixir_ls/
+# Dialyzer PLTs (built/cached in CI, never committed)
+/priv/plts/
+*.plt
+*.plt.hash
+
+# macOS
+.DS_Store

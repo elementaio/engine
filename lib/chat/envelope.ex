@@ -8,12 +8,27 @@ defmodule Chat.Envelope do
 
   `type` is one of:
 
-    * inbound  (client → engine): `:send`, `:read`, `:sync`
-    * outbound (engine → client): `:message`, `:ack`, `:receipt`, `:sync_page`, `:error`
+    * inbound  (client → engine): `:send`, `:read`, `:sync`, `:typing`,
+      `:presence_query`, `:read_state`
+    * outbound (engine → client): `:message`, `:ack`, `:receipt`, `:sync_page`,
+      `:error`, `:system`, `:presence`, `:typing`, `:read_state`
 
   `:payload` is an OPAQUE binary — the engine never inspects it.
   """
-  @type type :: :send | :read | :sync | :message | :ack | :receipt | :sync_page | :error
+  @type type ::
+          :send
+          | :read
+          | :sync
+          | :typing
+          | :presence_query
+          | :read_state
+          | :message
+          | :ack
+          | :receipt
+          | :sync_page
+          | :error
+          | :system
+          | :presence
 
   defstruct [
     :type,

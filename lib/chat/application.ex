@@ -16,6 +16,10 @@ defmodule Chat.Application do
 
   @impl true
   def start(_type, _args) do
+    # Fail LOUD and EARLY on bad config (missing/invalid adapters, bad limits)
+    # rather than with a confusing crash on the first message (OBS-3).
+    :ok = Chat.Config.validate!()
+
     # Join this node to the cluster-global scopes (safe on a single node too).
     :syn.add_node_to_scopes([:users, :conv_subs])
 

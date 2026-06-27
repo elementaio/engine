@@ -15,7 +15,9 @@ defmodule Chat.MixProject do
       package: package(),
       name: "chat_engine",
       source_url: @source_url,
-      docs: [main: "readme", extras: ["README.md"]]
+      docs: [main: "readme", extras: ["README.md"]],
+      # Stable PLT location so CI can cache it across runs (keyed on mix.lock).
+      dialyzer: [plt_local_path: "priv/plts", plt_core_path: "priv/plts"]
     ]
   end
 

@@ -10,15 +10,39 @@ defmodule Chat.Router do
   """
   alias Chat.Types
 
-  @doc "Return the (possibly remote) pid of the conversation owner, starting it if needed."
-  @spec ensure_conversation(Types.conversation_id()) :: pid()
+  # Bound on the cross-node owner-lookup `:erpc`. A remote owner node that is slow
+  # or partitioned must NOT hang the caller's send path indefinitely (DF-2); after
+  # this it degrades to `{:error, {:owner_unreachable, node}}` and the client retries
+  # (a fresh HRW election picks a reachable owner once the view reconverges).
+  @owner_timeout_ms 5_000
+
+  @doc """
+  Return the (possibly remote) owner pid for a conversation, starting it if needed.
+
+  `{:error, {:owner_unreachable, node}}` when the owner lives on a remote node we
+  cannot reach within `#{@owner_timeout_ms}`ms (down, partitioned, or overloaded) —
+  the send path degrades instead of blocking forever (DF-2).
+  """
+  @spec ensure_conversation(Types.conversation_id()) ::
+          {:ok, pid()} | {:error, {:owner_unreachable, node()}}
   def ensure_conversation(conversation_id) do
     node = Chat.Cluster.owner_node(conversation_id)
 
     if node == Node.self() do
-      ensure_local(conversation_id)
+      {:ok, ensure_local(conversation_id)}
     else
-      :erpc.call(node, __MODULE__, :ensure_local, [conversation_id])
+      try do
+        {:ok, :erpc.call(node, __MODULE__, :ensure_local, [conversation_id], @owner_timeout_ms)}
+      catch
+        kind, reason ->
+          :telemetry.execute(
+            [:chat, :router, :owner_unreachable],
+            %{},
+            %{conversation_id: conversation_id, node: node, kind: kind, reason: reason}
+          )
+
+          {:error, {:owner_unreachable, node}}
+      end
     end
   end
 

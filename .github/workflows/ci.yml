@@ -31,4 +31,42 @@ jobs:
       - run: mix deps.get
       - run: mix format --check-formatted
       - run: mix deps.unlock --check-unused
-      - run: mix test
+      - run: mix credo
+      # The pass/fail gate: includes the multi-node (:distributed) suite;
+      # setup-beam provides epmd.
+      - run: mix test --include distributed
+      # Coverage report (advisory — the failing-threshold knob is unreliable
+      # across Elixir versions, so this informs but does not gate).
+      - name: Coverage (advisory)
+        run: mix test --include distributed --cover
+        continue-on-error: true
+
+  dialyzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Restore deps cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      # The PLT is expensive to build; cache it keyed on the lockfile + toolchain.
+      - name: Restore PLT cache
+        uses: actions/cache@v4
+        with:
+          path: priv/plts
+          key: ${{ runner.os }}-plt-otp27-elixir1.17-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-plt-otp27-elixir1.17-
+
+      - run: mix deps.get
+      - run: mix dialyzer --format github

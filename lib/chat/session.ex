@@ -49,7 +49,14 @@ defmodule Chat.Session do
   plus EITHER a trusted `:user_id` OR `:credentials` (resolved via the Auth port).
   """
   def connect(%{device_id: _, transport: _} = attrs) do
-    DynamicSupervisor.start_child(Chat.Session.Supervisor, {__MODULE__, attrs})
+    # A draining node (being rolled) refuses NEW sessions; existing ones keep
+    # running until their clients disconnect (OBS-5). The body routes the retry
+    # to another node.
+    if Chat.Health.draining?() do
+      {:error, :draining}
+    else
+      DynamicSupervisor.start_child(Chat.Session.Supervisor, {__MODULE__, attrs})
+    end
   end
 
   def start_link(attrs), do: GenServer.start_link(__MODULE__, attrs)
@@ -78,6 +85,12 @@ defmodule Chat.Session do
   def init(%{device_id: device_id, transport: transport} = attrs) do
     case resolve_user(attrs) do
       {:ok, user_id} ->
+        :telemetry.execute(
+          [:chat, :session, :connected],
+          %{},
+          %{user_id: user_id, device_id: device_id}
+        )
+
         # Join the cluster-global :users group so this device is discoverable from
         # any node (`Chat.Router.sessions_for/1`). :syn auto-removes us on death.
         :ok = :syn.join(:users, user_id, self())
@@ -97,6 +110,12 @@ defmodule Chat.Session do
         {:ok, state, {:continue, :catch_up}}
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:chat, :session, :auth_failed],
+          %{},
+          %{device_id: device_id, reason: reason}
+        )
+
         # Authentication failed — refuse the connection (do not start the session).
         {:stop, {:unauthenticated, reason}}
     end
@@ -303,7 +322,19 @@ defmodule Chat.Session do
   defp resolve_user(_), do: {:error, :no_identity}
 
   defp authorize(action, %{user_id: user_id}, resource) do
-    Chat.Ports.auth().authorize(action, user_id, resource)
+    case Chat.Ports.auth().authorize(action, user_id, resource) do
+      :ok ->
+        :ok
+
+      {:error, _} = err ->
+        :telemetry.execute(
+          [:chat, :session, :authorize_denied],
+          %{},
+          %{action: action, user_id: user_id, resource: resource}
+        )
+
+        err
+    end
   end
 
   defp conversations_for(user_id) do

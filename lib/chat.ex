@@ -106,6 +106,20 @@ defmodule Chat do
   def inject(conversation_id, %Message{} = message),
     do: Chat.Conversation.inject(conversation_id, message)
 
+  # ── Health & lifecycle ──────────────────────────────────────────────────────
+
+  @doc "Is this node ready to accept new connections? (config valid and not draining)."
+  @spec ready?() :: boolean()
+  def ready?, do: Chat.Health.ready?()
+
+  @doc "Begin a graceful drain: refuse new sessions, keep existing ones (for rolling a node)."
+  @spec drain() :: :ok
+  def drain, do: Chat.Health.drain()
+
+  @doc "Resume accepting new sessions after a drain."
+  @spec resume() :: :ok
+  def resume, do: Chat.Health.resume()
+
   # ── internals ───────────────────────────────────────────────────────────────
 
   defp do_add(conversation_id, user_id, opts) do

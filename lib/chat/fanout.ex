@@ -44,12 +44,14 @@ defmodule Chat.Fanout do
   """
   @spec dispatch(Types.conversation_id(), Chat.Envelope.t(), pid() | nil) :: :ok
   def dispatch(conversation_id, env, except \\ nil) do
-    @scope
-    |> :syn.members(conversation_id)
-    |> Stream.map(fn {pid, _meta} -> pid end)
-    |> Stream.reject(&(&1 == except))
-    |> Enum.group_by(&node/1)
-    |> Enum.each(fn {node, pids} ->
+    by_node =
+      @scope
+      |> :syn.members(conversation_id)
+      |> Stream.map(fn {pid, _meta} -> pid end)
+      |> Stream.reject(&(&1 == except))
+      |> Enum.group_by(&node/1)
+
+    Enum.each(by_node, fn {node, pids} ->
       if node == Node.self() do
         deliver_local(pids, env)
       else
@@ -57,6 +59,15 @@ defmodule Chat.Fanout do
         :erpc.cast(node, __MODULE__, :deliver_local, [pids, env])
       end
     end)
+
+    :telemetry.execute(
+      [:chat, :fanout, :dispatch],
+      %{
+        recipients: by_node |> Map.values() |> Enum.map(&length/1) |> Enum.sum(),
+        nodes: map_size(by_node)
+      },
+      %{conversation_id: conversation_id, type: env.type}
+    )
 
     :ok
   end

@@ -41,17 +41,21 @@ defmodule Chat.Conversation do
   @spec submit(Chat.Types.conversation_id(), Message.t(), pid()) ::
           {:ok, Chat.Types.seq()} | {:error, :fenced | :too_large | term()}
   def submit(conversation_id, %Message{} = msg, from) do
-    conversation_id
-    |> Chat.Router.ensure_conversation()
-    |> GenServer.call({:submit, msg, from})
+    with {:ok, owner} <- Chat.Router.ensure_conversation(conversation_id) do
+      call_owner(owner, {:submit, msg, from})
+    end
   end
 
   @doc "Relay a delivered/read receipt to the other members (1:1 only in M2)."
   @spec receipt(Chat.Types.conversation_id(), map(), pid()) :: :ok
   def receipt(conversation_id, receipt, from) when is_map(receipt) do
-    conversation_id
-    |> Chat.Router.ensure_conversation()
-    |> GenServer.cast({:receipt, receipt, from})
+    case Chat.Router.ensure_conversation(conversation_id) do
+      {:ok, owner} -> GenServer.cast(owner, {:receipt, receipt, from})
+      # Receipts are best-effort; a temporarily unreachable owner just drops them.
+      {:error, _} -> :ok
+    end
+
+    :ok
   end
 
   @doc """
@@ -62,12 +66,31 @@ defmodule Chat.Conversation do
   @spec inject(Chat.Types.conversation_id(), Message.t()) ::
           {:ok, Chat.Types.seq()} | {:error, :fenced | :too_large | term()}
   def inject(conversation_id, %Message{} = msg) do
-    conversation_id
-    |> Chat.Router.ensure_conversation()
-    |> GenServer.call({:inject, msg})
+    with {:ok, owner} <- Chat.Router.ensure_conversation(conversation_id) do
+      call_owner(owner, {:inject, msg})
+    end
   end
 
   defp via(id), do: {:via, Registry, {Chat.ConversationRegistry, id}}
+
+  # Bound on the owner GenServer.call. The owner pid may be remote (Erlang
+  # distribution); if its node dies AFTER lookup the call would otherwise exit and
+  # crash the caller. Convert a timeout/down into a clean error so the send path
+  # degrades and the client retries — symmetric with the router's lookup fence (DF-2).
+  @owner_call_timeout_ms 5_000
+
+  defp call_owner(owner, request) do
+    GenServer.call(owner, request, @owner_call_timeout_ms)
+  catch
+    :exit, reason ->
+      :telemetry.execute(
+        [:chat, :conversation, :owner_call_failed],
+        %{},
+        %{reason: reason}
+      )
+
+      {:error, :owner_unreachable}
+  end
 
   # ── Server ──────────────────────────────────────────────────────────────────
 
@@ -76,58 +99,62 @@ defmodule Chat.Conversation do
 
   @impl true
   def handle_call({:submit, %Message{} = msg, from}, _from, state) do
-    with :ok <- check_payload(msg) do
-      {size, state} = ensure_size(state)
+    case check_payload(msg) do
+      :ok ->
+        {size, state} = ensure_size(state)
 
-      case fenced_append(state, msg) do
-        {:ok, seq, state} ->
-          env = %Envelope{
-            type: :message,
-            conversation_id: state.id,
-            id: msg.id,
-            sender_id: msg.sender_id,
-            seq: seq,
-            payload: msg.payload,
-            # ask recipients for receipts only in confirmed 1:1
-            receipts: receipts?(size)
-          }
+        case fenced_append(state, msg) do
+          {:ok, seq, state} ->
+            env = %Envelope{
+              type: :message,
+              conversation_id: state.id,
+              id: msg.id,
+              sender_id: msg.sender_id,
+              seq: seq,
+              payload: msg.payload,
+              # ask recipients for receipts only in confirmed 1:1
+              receipts: receipts?(size)
+            }
 
-          # Deliver to the ONLINE subset only — cost is independent of roster size.
-          Fanout.dispatch(state.id, env, from)
-          {:reply, {:ok, seq}, state}
+            # Deliver to the ONLINE subset only — cost is independent of roster size.
+            Fanout.dispatch(state.id, env, from)
+            {:reply, {:ok, seq}, state}
 
-        other ->
-          handle_append_failure(other, state)
-      end
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+          other ->
+            handle_append_failure(other, state)
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
   def handle_call({:inject, %Message{} = msg}, _from, state) do
-    with :ok <- check_payload(msg) do
-      case fenced_append(state, msg) do
-        {:ok, seq, state} ->
-          env = %Envelope{
-            type: :message,
-            conversation_id: state.id,
-            id: msg.id,
-            sender_id: msg.sender_id,
-            seq: seq,
-            payload: msg.payload,
-            # publisher feed item — recipients must NOT emit receipts
-            receipts: false
-          }
+    case check_payload(msg) do
+      :ok ->
+        case fenced_append(state, msg) do
+          {:ok, seq, state} ->
+            env = %Envelope{
+              type: :message,
+              conversation_id: state.id,
+              id: msg.id,
+              sender_id: msg.sender_id,
+              seq: seq,
+              payload: msg.payload,
+              # publisher feed item — recipients must NOT emit receipts
+              receipts: false
+            }
 
-          Fanout.dispatch(state.id, env, nil)
-          {:reply, {:ok, seq}, state}
+            Fanout.dispatch(state.id, env, nil)
+            {:reply, {:ok, seq}, state}
 
-        other ->
-          handle_append_failure(other, state)
-      end
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+          other ->
+            handle_append_failure(other, state)
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -165,22 +192,25 @@ defmodule Chat.Conversation do
     latest = state.latest || seed_latest(mod, id)
 
     cond do
-      latest == :error ->
-        {:error, :latest_seq_unavailable}
+      latest == :error -> {:error, :latest_seq_unavailable}
+      function_exported?(mod, :append, 3) -> do_fenced_append(mod, state, msg, latest)
+      # Adapter provides no fence ⇒ no split-brain protection (documented).
+      true -> do_plain_append(mod, state, msg, latest)
+    end
+  end
 
-      function_exported?(mod, :append, 3) ->
-        case mod.append(id, msg, latest) do
-          {:ok, seq} -> {:ok, seq, %{state | latest: max(latest, seq)}}
-          {:error, {:fenced, current}} -> {:fenced, current}
-          {:error, reason} -> {:error, reason}
-        end
+  defp do_fenced_append(mod, %{id: id} = state, msg, latest) do
+    case mod.append(id, msg, latest) do
+      {:ok, seq} -> {:ok, seq, %{state | latest: max(latest, seq)}}
+      {:error, {:fenced, current}} -> {:fenced, current}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-      true ->
-        # Adapter provides no fence ⇒ no split-brain protection (documented).
-        case mod.append(id, msg) do
-          {:ok, seq} -> {:ok, seq, %{state | latest: max(latest, seq)}}
-          {:error, reason} -> {:error, reason}
-        end
+  defp do_plain_append(mod, %{id: id} = state, msg, latest) do
+    case mod.append(id, msg) do
+      {:ok, seq} -> {:ok, seq, %{state | latest: max(latest, seq)}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
