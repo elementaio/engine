@@ -31,7 +31,7 @@ reference adapters** (`Chat.Adapters.InMemory.*`) are the executable spec and th
 | `Chat.ReceiptStore.Port` | per-(conversation,user) read watermarks ("seen by N") |
 | `Chat.PresenceStore.Port` | coarse durable last-seen (lossy-tolerant) |
 | `Chat.Auth.Port` | authenticate/authorize — the engine enforces *your* verdict, never owns identity |
-| `Chat.OfflineQueue.Port` | optional push-notification hook |
+| `Chat.OfflineQueue.Port` | optional push-notification *wake* hook — `notify/3` is called (off the hub) for each member with no online session when a durable message lands; best-effort, since the recipient still catches up by cursor on reconnect |
 
 ## Use it
 

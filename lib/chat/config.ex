@@ -28,7 +28,13 @@ defmodule Chat.Config do
   ]
 
   # Knobs that, when set, must be a positive integer.
-  @positive_int_keys [:presence_max, :typing_max, :max_mailbox, :max_payload_bytes]
+  @positive_int_keys [
+    :presence_max,
+    :typing_max,
+    :max_mailbox,
+    :max_payload_bytes,
+    :offline_push_max_members
+  ]
 
   @doc """
   Validate `:chat_engine` config. Returns `:ok` or raises `ArgumentError` with

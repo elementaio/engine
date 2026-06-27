@@ -10,6 +10,11 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 `:telemetry` seam only).
 
 ### Added
+- **Offline push wake hook wired** (REL-5): when a durable message lands, every conversation member with
+  no online session is sent through `Chat.OfflineQueue.Port.notify/3` — off the conversation owner's hot
+  path (a supervised task), bounded by `:offline_push_max_members` (default 10_000, telemetered when
+  exceeded). The port was redefined from an unused store-and-forward queue into a single user-level wake
+  hook, matching the engine's cursor-based recovery (a lost push costs a late wake, never a lost message).
 - **Boot-time config validation** (`Chat.Config.validate!/0`, run from `Chat.Application.start/2`):
   required ports must be configured, loadable, and implement their behaviour; numeric knobs must be
   positive integers — a misconfigured body fails loudly at boot.

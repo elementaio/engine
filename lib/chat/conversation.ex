@@ -118,6 +118,8 @@ defmodule Chat.Conversation do
 
             # Deliver to the ONLINE subset only — cost is independent of roster size.
             Fanout.dispatch(state.id, env, from)
+            # Wake offline members (off the hub; best-effort — see OfflineNotifier).
+            notify_offline(state.id, %{msg | seq: seq})
             {:reply, {:ok, seq}, state}
 
           other ->
@@ -147,6 +149,7 @@ defmodule Chat.Conversation do
             }
 
             Fanout.dispatch(state.id, env, nil)
+            notify_offline(state.id, %{msg | seq: seq})
             {:reply, {:ok, seq}, state}
 
           other ->
@@ -182,6 +185,25 @@ defmodule Chat.Conversation do
   def handle_cast(:invalidate_size, state), do: {:noreply, %{state | size: nil}}
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
+
+  # Wake conversation members with no online session via the OfflineQueue port.
+  # Runs OFF the hub (a supervised task) so the single-writer owner never blocks
+  # on roster scans or a slow push backend; no-op when no adapter is configured.
+  defp notify_offline(conversation_id, %Message{} = msg) do
+    case Chat.Ports.offline_queue() do
+      nil ->
+        :ok
+
+      mod ->
+        Task.Supervisor.start_child(Chat.TaskSupervisor, Chat.OfflineNotifier, :run, [
+          mod,
+          conversation_id,
+          msg
+        ])
+
+        :ok
+    end
+  end
 
   # Persist FIRST. seq is assigned durably and idempotently by the port — this is
   # the at-least-once hinge: we do not ack the sender until it is durable. When the

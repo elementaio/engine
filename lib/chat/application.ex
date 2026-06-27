@@ -32,7 +32,10 @@ defmodule Chat.Application do
       # One owner process per ACTIVE conversation, started on demand.
       {DynamicSupervisor, strategy: :one_for_one, name: Chat.Conversation.Supervisor},
       # One process per connected device.
-      {DynamicSupervisor, strategy: :one_for_one, name: Chat.Session.Supervisor}
+      {DynamicSupervisor, strategy: :one_for_one, name: Chat.Session.Supervisor},
+      # Off-hub best-effort work (e.g. offline push notifications) so the
+      # single-writer conversation owners never block on it.
+      {Task.Supervisor, name: Chat.TaskSupervisor}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Chat.Supervisor)
