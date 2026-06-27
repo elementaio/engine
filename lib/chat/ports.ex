@@ -6,9 +6,12 @@ defmodule Chat.Ports do
   that returns is decided entirely by the body via config (`config/config.exs`),
   so the core stays free of any concrete database.
 
-  `persistence/0`, `conversation_store/0`, and `auth/0` are required (they raise
-  with guidance if unset). `offline_queue/0` and `presence_store/0` are optional
-  until M3/M4 and return `nil` when unset.
+  All ports are **required** except one — `persistence/0`, `conversation_store/0`,
+  `auth/0`, `cursor_store/0`, `presence_store/0`, and `receipt_store/0` each raise
+  with guidance if unset. `offline_queue/0` is the only **optional** port (the
+  offline push-notification wake hook); it returns `nil` when unset, disabling
+  offline pushes. The bundled in-memory reference adapters satisfy all required
+  ports out of the box (see `config/config.exs`).
   """
 
   @doc "The module implementing `Chat.Persistence.Port`."

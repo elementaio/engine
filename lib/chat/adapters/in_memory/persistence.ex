@@ -6,10 +6,9 @@ defmodule Chat.Adapters.InMemory.Persistence do
   It is, however, a faithful model of the real contract:
 
     * one GenServer = one serialization point ⇒ per-conversation `seq` is
-      monotonic and gap-free *by construction*. This mirrors the "single writer
-      per conversation" rule from CHAT_ENGINE_PLAN.md Part 10 — in the cluster
-      that single writer is one conversation-owner process; here it is this
-      GenServer.
+      monotonic and gap-free *by construction*. This mirrors the engine's "single
+      writer per conversation" rule — in the cluster that single writer is one
+      `Chat.Conversation` owner process; here it is this GenServer.
     * `append/2` is idempotent on `message.id`.
 
   Start it like any process. By default it registers under its own module name;

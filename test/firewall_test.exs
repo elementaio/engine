@@ -2,7 +2,7 @@ defmodule Chat.FirewallTest do
   @moduledoc """
   The architectural firewall: the pure core must not depend on transport, web,
   or database libraries. If this fails, someone added a forbidden dep to
-  `apps/chat_engine/mix.exs` — move it to an edge/body app instead.
+  `mix.exs` — move it to a body app instead.
   """
   use ExUnit.Case, async: true
 
