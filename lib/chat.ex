@@ -139,7 +139,8 @@ defmodule Chat do
   Publish a message into a channel from a non-session publisher (e.g. an
   ingestion service). Assigns seq, persists, and fans out live to all watchers.
   """
-  @spec inject(Types.conversation_id(), Message.t()) :: {:ok, Types.seq()}
+  @spec inject(Types.conversation_id(), Message.t()) ::
+          {:ok, Types.seq() | :ephemeral} | {:error, term()}
   def inject(conversation_id, %Message{} = message),
     do: Chat.Conversation.inject(conversation_id, message)
 

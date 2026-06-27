@@ -151,9 +151,25 @@ defmodule Chat.Session do
   def handle_cast({:inbound, %Envelope{type: :send} = env}, state) do
     case authorize(:send, state, env.conversation_id) do
       :ok ->
-        msg = %Message{id: env.id, sender_id: state.user_id, payload: env.payload}
+        msg = %Message{
+          id: env.id,
+          sender_id: state.user_id,
+          payload: env.payload,
+          kind: message_kind(env.kind)
+        }
 
         case Chat.Conversation.submit(env.conversation_id, msg, self()) do
+          # Live-only message: no durable seq, no cursor advance — ack so the
+          # client knows it was broadcast, with status :ephemeral and seq nil.
+          {:ok, :ephemeral} ->
+            push(state, %Envelope{
+              type: :ack,
+              conversation_id: env.conversation_id,
+              id: env.id,
+              seq: nil,
+              status: :ephemeral
+            })
+
           {:ok, seq} ->
             Cursors.advance(state.device_ref, env.conversation_id, seq)
 
@@ -381,6 +397,11 @@ defmodule Chat.Session do
   defp sync_limit(_), do: sync_page_max()
 
   defp sync_page_max, do: Application.get_env(:chat_engine, :sync_page_max, 100)
+
+  # Only the engine's two known kinds are honored from the wire; anything else
+  # (including nil) is treated as a normal durable message.
+  defp message_kind(:ephemeral), do: :ephemeral
+  defp message_kind(_), do: :chat
 
   defp drain(state, conversation_id, after_seq) do
     case Chat.history_page(conversation_id, after_seq, @catch_up_page) do

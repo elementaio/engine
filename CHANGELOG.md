@@ -10,6 +10,11 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 `:telemetry` seam only).
 
 ### Added
+- **Ephemeral / no-persist channel mode** (activates the previously-dead `Message.kind`): a
+  `kind: :ephemeral` message (via `Chat.inject/2`, or a client `:send` with `kind: :ephemeral`) is fanned
+  out live to online subscribers but **not** persisted — no `seq` consumed, no offline wake, no cursor
+  advance, never in history. Lossy by design; the path for live feeds, dashboards, presence signals, and
+  IoT telemetry. Returns `{:ok, :ephemeral}`; a client `:send` gets an `:ephemeral`-status ack.
 - **History pagination cursor** (API-3 / CC-5): `Chat.history_page/3` returns `%{messages, next_after,
   more?}` (a `limit + 1` look-ahead detects "more" with no extra round-trip and no port change). The
   client-facing `:sync` verb now returns ONE page with a `seq` continuation cursor + `more` flag,

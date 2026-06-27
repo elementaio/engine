@@ -2,8 +2,12 @@
 
 **A real-time messaging engine core, in Elixir/BEAM.** Connections, ordering, fan-out, presence,
 receipts, offline catch-up, and clustering — behind clean ports. It ships **no database** and **no
-product features**; you plug those in through small behaviours. Drive it from any body (a chat app, a
-live-feed product, an ERP module, a game).
+product features**; you plug those in through small behaviours. Drive it from any body — a chat app, a
+live-feed/dashboard, an IoT command bus, a support inbox, an ERP module.
+
+Two delivery modes share the same fan-out: **durable** messages (the default) get a gap-free `seq`,
+catch-up, and offline wake; **ephemeral** messages (`kind: :ephemeral`) are broadcast live-only to online
+subscribers — no persistence, no `seq`, no history — for prices/telemetry/presence-style signals.
 
 > Extracted from the Pulsar project to live as its own versioned package. Pulsar is one *body* built on
 > this engine; this repo is the engine itself.

@@ -37,9 +37,13 @@ defmodule Chat.Conversation do
     GenServer.start_link(__MODULE__, conversation_id, name: via(conversation_id))
   end
 
-  @doc "Submit a new message; returns its assigned seq. `from` is the sender's session pid."
+  @doc """
+  Submit a new message; returns its assigned `seq`, or `:ephemeral` for a
+  `kind: :ephemeral` message (live-only, not persisted). `from` is the sender's
+  session pid.
+  """
   @spec submit(Chat.Types.conversation_id(), Message.t(), pid()) ::
-          {:ok, Chat.Types.seq()} | {:error, :fenced | :too_large | term()}
+          {:ok, Chat.Types.seq() | :ephemeral} | {:error, :fenced | :too_large | term()}
   def submit(conversation_id, %Message{} = msg, from) do
     with {:ok, owner} <- Chat.Router.ensure_conversation(conversation_id) do
       call_owner(owner, {:submit, msg, from})
@@ -61,10 +65,12 @@ defmodule Chat.Conversation do
   @doc """
   Publish a message into the channel from a non-session PUBLISHER (the control
   API / a body like Pulsar). Assigns seq, persists, fans out to all subscribers
-  (no originating session to exclude); receipts are suppressed.
+  (no originating session to exclude); receipts are suppressed. A
+  `kind: :ephemeral` message is fanned out live-only (no persist) and returns
+  `{:ok, :ephemeral}` — the path for live feeds / dashboards / IoT telemetry.
   """
   @spec inject(Chat.Types.conversation_id(), Message.t()) ::
-          {:ok, Chat.Types.seq()} | {:error, :fenced | :too_large | term()}
+          {:ok, Chat.Types.seq() | :ephemeral} | {:error, :fenced | :too_large | term()}
   def inject(conversation_id, %Message{} = msg) do
     with {:ok, owner} <- Chat.Router.ensure_conversation(conversation_id) do
       call_owner(owner, {:inject, msg})
@@ -96,6 +102,21 @@ defmodule Chat.Conversation do
 
   @impl true
   def init(conversation_id), do: {:ok, %{id: conversation_id, size: nil, latest: nil}}
+
+  # Ephemeral (kind: :ephemeral) — live-only: NO durable append, NO seq, NO offline
+  # wake, NO cursor advance. Lossy by design: offline and late subscribers never
+  # see it and it is never in history. For live feeds, dashboards, presence-style
+  # signals, and IoT telemetry — anything where only the current value matters and
+  # replay does not. (Matched before the durable clauses below.)
+  @impl true
+  def handle_call({:submit, %Message{kind: :ephemeral} = msg, from}, _from, state) do
+    reply_ephemeral(check_payload(msg), state, msg, from)
+  end
+
+  @impl true
+  def handle_call({:inject, %Message{kind: :ephemeral} = msg}, _from, state) do
+    reply_ephemeral(check_payload(msg), state, msg, nil)
+  end
 
   @impl true
   def handle_call({:submit, %Message{} = msg, from}, _from, state) do
@@ -185,6 +206,36 @@ defmodule Chat.Conversation do
   def handle_cast(:invalidate_size, state), do: {:noreply, %{state | size: nil}}
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
+
+  defp reply_ephemeral(:ok, state, %Message{} = msg, from) do
+    dispatch_ephemeral(state.id, msg, from)
+    {:reply, {:ok, :ephemeral}, state}
+  end
+
+  defp reply_ephemeral({:error, reason}, state, _msg, _from) do
+    {:reply, {:error, reason}, state}
+  end
+
+  defp dispatch_ephemeral(conversation_id, %Message{} = msg, from) do
+    env = %Envelope{
+      type: :message,
+      conversation_id: conversation_id,
+      id: msg.id,
+      sender_id: msg.sender_id,
+      # no durable seq, and recipients must NOT emit receipts for a live-only item
+      seq: nil,
+      payload: msg.payload,
+      receipts: false
+    }
+
+    Fanout.dispatch(conversation_id, env, from)
+
+    :telemetry.execute(
+      [:chat, :conversation, :ephemeral],
+      %{},
+      %{conversation_id: conversation_id}
+    )
+  end
 
   # Wake conversation members with no online session via the OfflineQueue port.
   # Runs OFF the hub (a supervised task) so the single-writer owner never blocks
