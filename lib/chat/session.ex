@@ -205,21 +205,15 @@ defmodule Chat.Session do
     {:noreply, state}
   end
 
-  # Inbound :sync — explicit catch-up by sequence.
+  # Inbound :sync — explicit catch-up by sequence. ONE page per request: the reply
+  # carries a `seq` continuation cursor and a `more` flag; the client re-issues
+  # :sync with that `seq` until `more` is false. Page size is the client's `count`
+  # (capped at :sync_page_max). Delivered messages advance the device cursor, so
+  # :sync and auto catch-up share semantics (CC-5).
   def handle_cast({:inbound, %Envelope{type: :sync} = env}, state) do
     case authorize(:sync, state, env.conversation_id) do
       :ok ->
-        case Chat.history(env.conversation_id, env.seq || 0) do
-          {:ok, messages} ->
-            push(state, %Envelope{
-              type: :sync_page,
-              conversation_id: env.conversation_id,
-              messages: Enum.map(messages, &message_map/1)
-            })
-
-          {:error, reason} ->
-            push(state, error_env(env.conversation_id, nil, reason))
-        end
+        deliver_sync_page(state, env)
 
       {:error, :forbidden} ->
         push(state, error_env(env.conversation_id, nil, :forbidden))
@@ -361,30 +355,54 @@ defmodule Chat.Session do
     drain(state, conversation_id, cursor)
   end
 
+  # Deliver ONE page of explicit :sync and advance the cursor over it. The client
+  # drives pagination via the returned `seq`/`more`.
+  defp deliver_sync_page(state, %Envelope{conversation_id: conv} = env) do
+    after_seq = env.seq || 0
+
+    case Chat.history_page(conv, after_seq, sync_limit(env.count)) do
+      {:ok, page} ->
+        Enum.each(page.messages, &Cursors.advance(state.device_ref, conv, &1.seq))
+
+        push(state, %Envelope{
+          type: :sync_page,
+          conversation_id: conv,
+          seq: page.next_after,
+          more: page.more?,
+          messages: Enum.map(page.messages, &message_map/1)
+        })
+
+      {:error, reason} ->
+        push(state, error_env(conv, nil, reason))
+    end
+  end
+
+  defp sync_limit(n) when is_integer(n) and n > 0, do: min(n, sync_page_max())
+  defp sync_limit(_), do: sync_page_max()
+
+  defp sync_page_max, do: Application.get_env(:chat_engine, :sync_page_max, 100)
+
   defp drain(state, conversation_id, after_seq) do
-    case Chat.history(conversation_id, after_seq, @catch_up_page) do
-      {:ok, []} ->
+    case Chat.history_page(conversation_id, after_seq, @catch_up_page) do
+      {:ok, %{messages: []}} ->
         :ok
 
-      {:ok, messages} ->
-        last =
-          Enum.reduce(messages, after_seq, fn %Message{} = m, _acc ->
-            push(state, %Envelope{
-              type: :message,
-              conversation_id: conversation_id,
-              id: m.id,
-              sender_id: m.sender_id,
-              seq: m.seq,
-              payload: m.payload,
-              receipts: false
-            })
+      {:ok, %{messages: messages, next_after: last, more?: more?}} ->
+        Enum.each(messages, fn %Message{} = m ->
+          push(state, %Envelope{
+            type: :message,
+            conversation_id: conversation_id,
+            id: m.id,
+            sender_id: m.sender_id,
+            seq: m.seq,
+            payload: m.payload,
+            receipts: false
+          })
 
-            Cursors.advance(state.device_ref, conversation_id, m.seq)
-            m.seq
-          end)
+          Cursors.advance(state.device_ref, conversation_id, m.seq)
+        end)
 
-        # A full page may mean more is waiting — keep draining.
-        if length(messages) >= @catch_up_page do
+        if more? do
           :telemetry.execute(
             [:chat, :session, :catch_up_page],
             %{count: length(messages)},

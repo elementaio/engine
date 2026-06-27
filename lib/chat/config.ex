@@ -33,7 +33,8 @@ defmodule Chat.Config do
     :typing_max,
     :max_mailbox,
     :max_payload_bytes,
-    :offline_push_max_members
+    :offline_push_max_members,
+    :sync_page_max
   ]
 
   @doc """

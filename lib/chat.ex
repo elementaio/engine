@@ -92,6 +92,43 @@ defmodule Chat do
     Ports.persistence().read_after(conversation_id, after_seq, limit)
   end
 
+  @typedoc """
+  One page of history: up to `limit` messages oldest-first, the `next_after` cursor
+  to pass back for the following page, and `more?` (is there at least one message
+  beyond this page). When `more?` is false, `next_after` is the last seq seen (or
+  the requested `after_seq` if the page was empty) — re-requesting with it is a
+  safe no-op.
+  """
+  @type page :: %{messages: [Message.t()], next_after: Types.seq(), more?: boolean()}
+
+  @doc """
+  Read one page of history after `after_seq` with a continuation cursor.
+
+  Paginate by re-calling with `next_after` until `more?` is false. Built on
+  `read_after` with a `limit + 1` look-ahead, so detecting "is there more" costs no
+  extra round-trip and needs nothing from the adapter beyond the existing contract.
+  """
+  @spec history_page(Types.conversation_id(), Types.seq(), pos_integer()) ::
+          {:ok, page()} | {:error, term()}
+  def history_page(conversation_id, after_seq \\ 0, limit \\ 100) when limit > 0 do
+    case Ports.persistence().read_after(conversation_id, after_seq, limit + 1) do
+      {:ok, msgs} ->
+        more? = length(msgs) > limit
+        page = if more?, do: Enum.take(msgs, limit), else: msgs
+
+        next_after =
+          case List.last(page) do
+            %Message{seq: seq} -> seq
+            nil -> after_seq
+          end
+
+        {:ok, %{messages: page, next_after: next_after, more?: more?}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
   @doc "Highest assigned seq for a conversation (0 if empty)."
   @spec latest_seq(Types.conversation_id()) :: {:ok, Types.seq()} | {:error, term()}
   def latest_seq(conversation_id) do

@@ -54,7 +54,10 @@ defmodule Chat.Envelope do
     :user_id,
     # for :read_state → "seen by" count + (capped) reader list
     :count,
-    :readers
+    :readers,
+    # for :sync_page → is there at least one more message beyond this page
+    # (paginate by re-issuing :sync with this page's `seq` until `more` is false)
+    :more
   ]
 
   @type t :: %__MODULE__{type: type()}

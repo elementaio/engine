@@ -10,6 +10,11 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 `:telemetry` seam only).
 
 ### Added
+- **History pagination cursor** (API-3 / CC-5): `Chat.history_page/3` returns `%{messages, next_after,
+  more?}` (a `limit + 1` look-ahead detects "more" with no extra round-trip and no port change). The
+  client-facing `:sync` verb now returns ONE page with a `seq` continuation cursor + `more` flag,
+  advances the device cursor over delivered pages (unifying it with auto catch-up), and bounds page size
+  at `:sync_page_max`. Auto catch-up's drain loop was refactored onto the same primitive.
 - **Offline push wake hook wired** (REL-5): when a durable message lands, every conversation member with
   no online session is sent through `Chat.OfflineQueue.Port.notify/3` — off the conversation owner's hot
   path (a supervised task), bounded by `:offline_push_max_members` (default 10_000, telemetered when

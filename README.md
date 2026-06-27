@@ -63,7 +63,12 @@ Chat.Session.handle_inbound(session, %Chat.Envelope{type: :send, conversation_id
 
 Control API (in-VM): `Chat.create_conversation/2`, `Chat.add_member/2`, `Chat.members/1`,
 `Chat.online?/1`, `Chat.read_state/2`, `Chat.append/2`, `Chat.inject/2`, `Chat.history/3`,
-`Chat.latest_seq/1`.
+`Chat.history_page/3` (paged: `%{messages, next_after, more?}` — re-call with `next_after` until
+`more?` is false), `Chat.latest_seq/1`.
+
+The client-facing `:sync` verb mirrors this over the wire: each `:sync_page` reply carries a `seq`
+continuation cursor and a `more` flag, so a client pages a long history by re-issuing `:sync` with that
+`seq` until `more` is false (page size = the request's `count`, capped at `:sync_page_max`).
 
 Health & lifecycle: `Chat.ready?/0` (config valid **and** not draining — wire it to a load-balancer
 probe), `Chat.drain/0` / `Chat.resume/0` (graceful node roll: a draining node refuses NEW sessions with
