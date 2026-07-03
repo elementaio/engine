@@ -12,7 +12,7 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 ### Added
 - **Locus adapter set** (`Chat.Adapters.Locus.*`) — a production implementation of six ports
   (persistence with the CP fence, conversations, cursors, presence, receipts, offline queue) on
-  [Locus](https://github.com/intenttext/locus), over a bundled dependency-free RESP2 client
+  [Locus](https://github.com/elementaio/locus), over a bundled dependency-free RESP2 client
   (`:gen_tcp`; the firewall stays green). Message logs are Locus streams whose entry ids are the
   seqs; seq + log + idempotency commit in one `MULTI`/`EXEC`; monotonic watermarks use `SETMAX`;
   offline wakes are `BLPOP` jobs. Verified by the persistence contract kit + five direct suites

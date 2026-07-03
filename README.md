@@ -80,7 +80,7 @@ probe), `Chat.drain/0` / `Chat.resume/0` (graceful node roll: a draining node re
 
 ## Batteries included: the Locus adapter set
 
-The engine ships a **production adapter set for [Locus](https://github.com/intenttext/locus)**
+The engine ships a **production adapter set for [Locus](https://github.com/elementaio/locus)**
 (`Chat.Adapters.Locus.*`) — six of the seven ports over one dependency-free RESP client
 (`:gen_tcp` + ~100 lines of RESP2; the architectural firewall stays intact, no `:redix`).
 The message log is a Locus stream whose entry ids *are* the seqs (atomic
