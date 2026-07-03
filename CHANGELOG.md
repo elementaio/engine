@@ -6,6 +6,8 @@ All notable changes to `chat_engine` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-03
+
 Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal (stdlib + the existing
 `:telemetry` seam only).
 
