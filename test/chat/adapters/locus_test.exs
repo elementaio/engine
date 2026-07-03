@@ -110,6 +110,7 @@ defmodule Chat.Adapters.Locus.StoresTest do
   alias Chat.Adapters.LocusBoot
 
   alias Chat.Adapters.Locus.{
+    Client,
     ConversationStore,
     CursorStore,
     OfflineQueue,
@@ -223,8 +224,8 @@ defmodule Chat.Adapters.Locus.StoresTest do
 
     # A dedicated client is the sanctioned path.
     cfg = Locus.config()
-    {:ok, own} = Chat.Adapters.Locus.Client.start_link(host: cfg.host, port: cfg.port)
-    assert {:ok, nil} = Chat.Adapters.Locus.Client.command(own, ["BLPOP", "nothing:here", "0.1"])
+    {:ok, own} = Client.start_link(host: cfg.host, port: cfg.port)
+    assert {:ok, nil} = Client.command(own, ["BLPOP", "nothing:here", "0.1"])
   end
 
   test "fenced appends from two racing writers keep the log gap-free" do
