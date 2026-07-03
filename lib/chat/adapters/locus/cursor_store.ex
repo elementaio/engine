@@ -1,8 +1,9 @@
 defmodule Chat.Adapters.Locus.CursorStore do
   @moduledoc """
   `Chat.CursorStore.Port` on Locus: one integer key per (device, conversation),
-  advanced with `SETMAX` — Locus's atomic monotonic-max verb — so `advance/3`
-  can never move a cursor backwards, with no read-modify-write race. The opaque
+  advanced with the atomic monotonic-max primitive (`SETMAX`, or a portable CAS
+  on stock Redis — see `Chat.Adapters.Locus.set_max/2`) so `advance/3` can never
+  move a cursor backwards, with no read-modify-write race. The opaque
   `device_ref` term is url-base64-encoded into the key.
   """
 
@@ -21,13 +22,7 @@ defmodule Chat.Adapters.Locus.CursorStore do
   end
 
   @impl true
-  def advance(device_ref, cid, seq) do
-    case Locus.command(["SETMAX", key(device_ref, cid), seq]) do
-      {:ok, n} when is_integer(n) -> :ok
-      {:ok, {:error, msg}} -> {:error, {:locus, msg}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  def advance(device_ref, cid, seq), do: Locus.set_max(key(device_ref, cid), seq)
 
   defp key(device_ref, cid), do: Locus.conv_key(cid, "cur:" <> Locus.b64(device_ref))
 end

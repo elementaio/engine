@@ -256,4 +256,36 @@ defmodule Chat.Adapters.Locus.StoresTest do
     assert Enum.map(msgs, & &1.seq) == Enum.to_list(1..latest)
     assert Enum.sort(won) == Enum.uniq(Enum.sort(won))
   end
+
+  test "monotonic stores work in :cas mode (the SETMAX-free, stock-Redis path)" do
+    # `monotonic: :cas` swaps SETMAX for a portable WATCH/MULTI loop — the mode a
+    # deployment on stock Redis/Valkey/KeyDB uses. Locus speaks it too, so we can
+    # prove the code path here without a second server.
+    cfg = Application.get_env(:chat_engine, :locus, [])
+    Application.put_env(:chat_engine, :locus, Keyword.put(cfg, :monotonic, :cas))
+    on_exit(fn -> Application.put_env(:chat_engine, :locus, cfg) end)
+
+    conv = uniq("cas")
+    ref = {"al", "phone"}
+
+    # Cursor: monotonic max, never backwards.
+    assert :ok = CursorStore.advance(ref, conv, 5)
+    assert {:ok, 5} = CursorStore.get(ref, conv)
+    assert :ok = CursorStore.advance(ref, conv, 3)
+    assert {:ok, 5} = CursorStore.get(ref, conv)
+    assert :ok = CursorStore.advance(ref, conv, 9)
+    assert {:ok, 9} = CursorStore.get(ref, conv)
+
+    # Presence: last-seen never regresses.
+    user = uniq("user")
+    assert :ok = PresenceStore.touch(user, 1_000)
+    assert :ok = PresenceStore.touch(user, 500)
+    assert {:ok, 1_000} = PresenceStore.last_seen(user)
+
+    # Receipts: watermark monotonic, readers aggregated.
+    assert :ok = ReceiptStore.set_read(conv, "al", 4)
+    assert :ok = ReceiptStore.set_read(conv, "al", 3)
+    assert :ok = ReceiptStore.set_read(conv, "bo", 2)
+    assert {:ok, %{"al" => 4, "bo" => 2}} = ReceiptStore.read_watermarks(conv)
+  end
 end

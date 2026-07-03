@@ -104,6 +104,16 @@ config :chat_engine, :locus,
 children = [Chat.Adapters.Locus, ...]
 ```
 
+**Runs on stock Redis too.** Every command the adapter issues is standard RESP
+except `SETMAX` (Locus's atomic monotonic-max verb). Set `monotonic: :cas` and
+the cursor/presence/receipt stores use a portable `WATCH`/`MULTI` loop instead,
+so the *same* adapter runs unchanged on Redis / Valkey / KeyDB — verified against
+a real Redis in `test/chat/adapters/locus_test.exs`:
+
+```elixir
+config :chat_engine, :locus, host: "127.0.0.1", port: 6379, monotonic: :cas
+```
+
 This pairing — the engine as the connection/fan-out plane, Locus as the durable state plane —
 is the architecture behind **Vox**, the productized realtime-chat bundle (engine core + a
 WS/JSON body + Locus in one compose). The adapter set passes the full persistence contract

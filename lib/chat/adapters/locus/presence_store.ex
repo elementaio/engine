@@ -1,8 +1,10 @@
 defmodule Chat.Adapters.Locus.PresenceStore do
   @moduledoc """
   `Chat.PresenceStore.Port` on Locus: `vox:seen:<user>` holds the last-seen
-  epoch-ms, written with `SETMAX` so out-of-order touches (two nodes, clock
-  skew, retries) can never move last-seen backwards.
+  epoch-ms, written with the atomic monotonic-max primitive (`SETMAX`, or a
+  portable CAS on stock Redis — see `Chat.Adapters.Locus.set_max/2`) so
+  out-of-order touches (two nodes, clock skew, retries) can never move
+  last-seen backwards.
   """
 
   @behaviour Chat.PresenceStore.Port
@@ -10,13 +12,7 @@ defmodule Chat.Adapters.Locus.PresenceStore do
   alias Chat.Adapters.Locus
 
   @impl true
-  def touch(uid, ts) do
-    case Locus.command(["SETMAX", Locus.seen_key(uid), ts]) do
-      {:ok, n} when is_integer(n) -> :ok
-      {:ok, {:error, msg}} -> {:error, {:locus, msg}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  def touch(uid, ts), do: Locus.set_max(Locus.seen_key(uid), ts)
 
   @impl true
   def last_seen(uid) do

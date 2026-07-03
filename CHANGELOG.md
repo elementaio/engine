@@ -10,6 +10,12 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 `:telemetry` seam only).
 
 ### Added
+- **Stock-Redis compatibility for the Locus adapter set.** The only non-standard command it used
+  was `SETMAX` (a Locus verb), in the cursor/presence/receipt stores. A new `monotonic: :cas`
+  option (`config :chat_engine, :locus, monotonic: :cas`) swaps it for a portable
+  `WATCH`/`GET`/`MULTI`/`SET` loop, so the *same* adapter runs unchanged on Redis / Valkey /
+  KeyDB. Default stays `:setmax` (the one-round-trip fast path on Locus). Every port was driven
+  against a real vanilla Redis to confirm; a `:cas`-mode test is in `locus_test.exs`.
 - **Locus adapter set** (`Chat.Adapters.Locus.*`) — a production implementation of six ports
   (persistence with the CP fence, conversations, cursors, presence, receipts, offline queue) on
   [Locus](https://github.com/elementaio/locus), over a bundled dependency-free RESP2 client
