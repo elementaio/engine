@@ -99,11 +99,27 @@ defmodule Chat.Adapters.Locus do
 
   # ── Convenience used by the adapter modules ────────────────────────────────
 
-  @doc false
-  def command(cmd), do: Client.command(conn(), cmd)
+  # A blocking command on a SHARED pool member wedges every caller hashed to it
+  # (found live: a parked BLPOP made the wake-RPUSH queue behind it until the
+  # pop timed out). Blocking consumers start their own Client instead.
+  @blocking ~w(BLPOP BRPOP BLMOVE BZPOPMIN BZPOPMAX)
 
   @doc false
-  def pipeline(cmds), do: Client.pipeline(conn(), cmds)
+  def command(cmd), do: Client.command(conn(), guard_blocking!(cmd))
+
+  @doc false
+  def pipeline(cmds), do: Client.pipeline(conn(), Enum.map(cmds, &guard_blocking!/1))
+
+  defp guard_blocking!([name | _] = cmd) do
+    if String.upcase(IO.iodata_to_binary([name])) in @blocking do
+      raise ArgumentError,
+            "blocking commands must not run on the shared Locus pool (they wedge " <>
+              "every caller sharing the connection) — start a dedicated " <>
+              "Chat.Adapters.Locus.Client for BLPOP-style consumers"
+    end
+
+    cmd
+  end
 
   @doc false
   def exclusive(fun), do: Client.exclusive(conn(), fun)

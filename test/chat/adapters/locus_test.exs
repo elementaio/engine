@@ -202,7 +202,11 @@ defmodule Chat.Adapters.Locus.StoresTest do
     msg = %Chat.Message{id: "m-1", sender_id: "bob", payload: "secret", seq: 7, server_ts: 123}
     assert :ok = OfflineQueue.notify(user, conv, msg)
 
-    {:ok, [_key, job]} = Locus.command(["BLPOP", Locus.wake_key(), "1"])
+    cfg = Locus.config()
+    {:ok, worker} = Chat.Adapters.Locus.Client.start_link(host: cfg.host, port: cfg.port)
+
+    {:ok, [_key, job]} =
+      Chat.Adapters.Locus.Client.command(worker, ["BLPOP", Locus.wake_key(), "1"])
 
     assert job =~ ~s("user_id":"#{user}")
     assert job =~ ~s("conversation_id":"#{conv}")
@@ -210,6 +214,17 @@ defmodule Chat.Adapters.Locus.StoresTest do
     assert job =~ ~s("seq":7)
     # A wake is ids + seq only — never the payload.
     refute job =~ "secret"
+  end
+
+  test "blocking commands are refused on the shared pool" do
+    assert_raise ArgumentError, ~r/dedicated/, fn ->
+      Locus.command(["BLPOP", Locus.wake_key(), 1])
+    end
+
+    # A dedicated client is the sanctioned path.
+    cfg = Locus.config()
+    {:ok, own} = Chat.Adapters.Locus.Client.start_link(host: cfg.host, port: cfg.port)
+    assert {:ok, nil} = Chat.Adapters.Locus.Client.command(own, ["BLPOP", "nothing:here", "0.1"])
   end
 
   test "fenced appends from two racing writers keep the log gap-free" do
