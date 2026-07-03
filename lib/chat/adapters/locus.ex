@@ -1,6 +1,6 @@
 defmodule Chat.Adapters.Locus do
   @moduledoc """
-  Locus adapter set — the engine's memory, on [Locus](https://github.com/intenttext/locus).
+  Locus adapter set — the engine's memory, on [Locus](https://github.com/elementaio/locus).
 
   Implements six of the seven ports over one small dependency-free RESP client
   (`Chat.Adapters.Locus.Client`; `auth` stays app-side, where it belongs):
