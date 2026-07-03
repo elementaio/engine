@@ -10,6 +10,14 @@ Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal 
 `:telemetry` seam only).
 
 ### Added
+- **Locus adapter set** (`Chat.Adapters.Locus.*`) — a production implementation of six ports
+  (persistence with the CP fence, conversations, cursors, presence, receipts, offline queue) on
+  [Locus](https://github.com/intenttext/locus), over a bundled dependency-free RESP2 client
+  (`:gen_tcp`; the firewall stays green). Message logs are Locus streams whose entry ids are the
+  seqs; seq + log + idempotency commit in one `MULTI`/`EXEC`; monotonic watermarks use `SETMAX`;
+  offline wakes are `BLPOP` jobs. Verified by the persistence contract kit + five direct suites
+  against a real Locus (auto-skipped when the sibling binary is absent). This is the state plane
+  of **Vox** — the productized engine+body+Locus bundle.
 - **Ephemeral / no-persist channel mode** (activates the previously-dead `Message.kind`): a
   `kind: :ephemeral` message (via `Chat.inject/2`, or a client `:send` with `kind: :ephemeral`) is fanned
   out live to online subscribers but **not** persisted — no `seq` consumed, no offline wake, no cursor

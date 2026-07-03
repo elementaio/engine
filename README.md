@@ -78,6 +78,37 @@ Health & lifecycle: `Chat.ready?/0` (config valid **and** not draining — wire 
 probe), `Chat.drain/0` / `Chat.resume/0` (graceful node roll: a draining node refuses NEW sessions with
 `{:error, :draining}` but keeps existing ones running until their clients disconnect).
 
+## Batteries included: the Locus adapter set
+
+The engine ships a **production adapter set for [Locus](https://github.com/intenttext/locus)**
+(`Chat.Adapters.Locus.*`) — six of the seven ports over one dependency-free RESP client
+(`:gen_tcp` + ~100 lines of RESP2; the architectural firewall stays intact, no `:redix`).
+The message log is a Locus stream whose entry ids *are* the seqs (atomic
+`WATCH`/`MULTI`/`EXEC` append with the optional split-brain fence), cursors/receipts/last-seen
+ride Locus's atomic `SETMAX`, rosters are `SSCAN`-paged sets, and offline push-wakes land on a
+`BLPOP` work queue any language can drain.
+
+```elixir
+config :chat_engine,
+  persistence_adapter:        Chat.Adapters.Locus.Persistence,
+  conversation_store_adapter: Chat.Adapters.Locus.ConversationStore,
+  cursor_store_adapter:       Chat.Adapters.Locus.CursorStore,
+  presence_store_adapter:     Chat.Adapters.Locus.PresenceStore,
+  receipt_store_adapter:      Chat.Adapters.Locus.ReceiptStore,
+  offline_queue_adapter:      Chat.Adapters.Locus.OfflineQueue
+
+config :chat_engine, :locus,
+  host: "127.0.0.1", port: 6379, password: nil, pool_size: 4, prefix: "vox"
+
+# in the body's supervision tree, before the engine is used:
+children = [Chat.Adapters.Locus, ...]
+```
+
+This pairing — the engine as the connection/fan-out plane, Locus as the durable state plane —
+is the architecture behind **Vox**, the productized realtime-chat bundle (engine core + a
+WS/JSON body + Locus in one compose). The adapter set passes the full persistence contract
+kit (including the CP fence) against a real Locus in `test/chat/adapters/locus_test.exs`.
+
 ## Boot-time validation
 
 The engine validates its config at boot (`Chat.Config.validate!/0`, run from `Chat.Application.start/2`):
