@@ -6,6 +6,16 @@ All notable changes to `chat_engine` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-04
+
+### Added
+- `Chat.broadcast_ephemeral/2` — a fast lane that fans a live-only message straight to
+  online `:syn` subscribers, bypassing the per-conversation writer, membership store, and
+  owner GenServer entirely. For very high-volume ephemeral traffic (WebRTC call signaling,
+  presence, telemetry) where funnelling every message through the single ordered writer
+  serializes the burst behind durable work. `inject/2` with `kind: :ephemeral` is still the
+  ordered path.
+
 ## [0.2.0] — 2026-07-03
 
 Hardening toward production-readiness (ENGINE_STUDY.md §5), all firewall-legal (stdlib + the existing

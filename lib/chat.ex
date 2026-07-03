@@ -144,6 +144,34 @@ defmodule Chat do
   def inject(conversation_id, %Message{} = message),
     do: Chat.Conversation.inject(conversation_id, message)
 
+  @doc """
+  Broadcast a LIVE-ONLY message straight to the conversation's online subscribers,
+  bypassing the per-conversation writer entirely — no seq, no persist, no
+  membership write, no owner-GenServer hop. Delivery is best-effort to whoever is
+  subscribed on `:syn` right now.
+
+  This is the fast lane for very high-volume ephemeral traffic — WebRTC call
+  signaling, presence, telemetry — where funnelling every message through the
+  single ordered writer would serialize the burst behind durable work. Use
+  `inject/2` with a `kind: :ephemeral` message instead when you want ordering
+  relative to that conversation's durable stream.
+  """
+  @spec broadcast_ephemeral(Types.conversation_id(), Message.t()) :: {:ok, :ephemeral}
+  def broadcast_ephemeral(conversation_id, %Message{} = msg) do
+    env = %Envelope{
+      type: :message,
+      conversation_id: conversation_id,
+      id: msg.id,
+      sender_id: msg.sender_id,
+      seq: nil,
+      payload: msg.payload,
+      receipts: false
+    }
+
+    Chat.Fanout.dispatch(conversation_id, env, nil)
+    {:ok, :ephemeral}
+  end
+
   # ── Health & lifecycle ──────────────────────────────────────────────────────
 
   @doc "Is this node ready to accept new connections? (config valid and not draining)."

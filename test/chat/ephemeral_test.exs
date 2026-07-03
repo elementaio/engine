@@ -73,6 +73,25 @@ defmodule Chat.EphemeralTest do
     assert {:ok, 0} = Chat.latest_seq("live:prices")
   end
 
+  test "broadcast_ephemeral fans out to a watcher directly — no persist, no seq, no writer" do
+    w = connect("watcher2", :W2)
+    :ok = Session.subscribe(w, "live:signal")
+
+    assert {:ok, :ephemeral} =
+             Chat.broadcast_ephemeral("live:signal", %Message{
+               id: "sig1",
+               sender_id: "peer",
+               payload: "offer-sdp"
+             })
+
+    assert_receive {:frame, :W2,
+                    %Envelope{type: :message, id: "sig1", seq: nil, payload: "offer-sdp"}}
+
+    # Bypasses the per-conversation writer entirely: nothing durable, no seq.
+    assert {:ok, []} = Chat.history("live:signal", 0, 50)
+    assert {:ok, 0} = Chat.latest_seq("live:signal")
+  end
+
   test "ephemeral does not consume a seq — durable messages stay gap-free" do
     assert {:ok, 1} = Chat.inject("mix", %Message{id: "d1", sender_id: "s", payload: "a"})
 
