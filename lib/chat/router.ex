@@ -28,21 +28,24 @@ defmodule Chat.Router do
   def ensure_conversation(conversation_id) do
     node = Chat.Cluster.owner_node(conversation_id)
 
-    if node == Node.self() do
-      {:ok, ensure_local(conversation_id)}
-    else
-      try do
+    try do
+      if node == Node.self() do
+        # Wrap the LOCAL branch too (DF-2 symmetry): `ensure_local` can now raise on
+        # an unexpected `start_child` result (process-table/memory exhaustion) — that
+        # must degrade to a clean error, not crash the calling session (B15).
+        {:ok, ensure_local(conversation_id)}
+      else
         {:ok, :erpc.call(node, __MODULE__, :ensure_local, [conversation_id], @owner_timeout_ms)}
-      catch
-        kind, reason ->
-          :telemetry.execute(
-            [:chat, :router, :owner_unreachable],
-            %{},
-            %{conversation_id: conversation_id, node: node, kind: kind, reason: reason}
-          )
-
-          {:error, {:owner_unreachable, node}}
       end
+    catch
+      kind, reason ->
+        :telemetry.execute(
+          [:chat, :router, :owner_unreachable],
+          %{},
+          %{conversation_id: conversation_id, node: node, kind: kind, reason: reason}
+        )
+
+        {:error, {:owner_unreachable, node}}
     end
   end
 
@@ -59,8 +62,17 @@ defmodule Chat.Router do
                Chat.Conversation.Supervisor,
                {Chat.Conversation, conversation_id}
              ) do
-          {:ok, pid} -> pid
-          {:error, {:already_started, pid}} -> pid
+          {:ok, pid} ->
+            pid
+
+          {:error, {:already_started, pid}} ->
+            pid
+
+          # `:max_children`, `:ignore`, or an init crash: don't fall through to a
+          # CaseClauseError that kills the caller — raise a controlled exit the
+          # `ensure_conversation/1` try/catch converts to `{:error, owner_unreachable}`.
+          other ->
+            exit({:owner_unavailable, other})
         end
     end
   end

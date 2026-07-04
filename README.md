@@ -123,15 +123,22 @@ kit (including the CP fence) against a real Locus in `test/chat/adapters/locus_t
 
 The engine validates its config at boot (`Chat.Config.validate!/0`, run from `Chat.Application.start/2`):
 every **required** port must be configured, loadable, and actually implement its behaviour, and the
-numeric knobs (`max_payload_bytes`, `max_mailbox`, `presence_max`, `typing_max`) must be positive
-integers. A misconfigured body fails **loudly at boot** rather than with a confusing crash on the first
-message.
+numeric knobs (`max_payload_bytes`, `max_mailbox`, `presence_max`, `typing_max`, `max_pending_gap`,
+`offline_max_inflight`, `offline_recheck_ms`) must be positive integers. Set `require_fence: true` to
+also **refuse to boot** on a persistence adapter that lacks the `append/3` CP fence (so clustered
+split-brain protection can't silently fall back to unprotected `append/2`). A misconfigured body fails
+**loudly at boot** rather than with a confusing crash on the first message.
+
+Two optional gates default off: `enforce_membership: true` makes the core check `member?/2` on every
+conversation-scoped verb (defense-in-depth if your `Auth` adapter is allow-all), and `require_fence`
+as above.
 
 ## Testing your adapters
 
 The load-bearing port ships an **executable contract test-kit**. Point it at your adapter and it asserts
-the guarantees (idempotency on `id`, monotonic gap-free `seq`, ordered `read_after`, and the optional
-`append/3` CP fence — run automatically when your adapter implements it):
+the guarantees (idempotency on `id`, monotonic gap-free `seq`, ordered `read_after`, the optional
+`append/3` CP fence, and a **concurrency race** — N writers at a contested `expected_seq` must yield
+exactly one commit and N−1 `{:fenced, current}` — run automatically when your adapter implements the fence):
 
 ```elixir
 defmodule MyApp.Persistence.ContractTest do
@@ -143,12 +150,18 @@ end
 
 ```sh
 mix deps.get
-mix test                 # includes the firewall + adapter + contract-kit tests
+mix test                 # firewall + core + in-memory contract-kit tests
 mix test --include distributed   # also the multi-node tests (needs epmd)
 mix credo                # static analysis (CI-gated)
 mix dialyzer             # type checking (CI-gated, separate job)
 mix format
 ```
+
+> **Note on the Locus adapter suite.** The real-Locus contract/fence tests are tagged `:locus` and need
+> the sibling Locus binary (`../locus/target/release/locus`). When it is absent, `mix test` **loudly
+> excludes** them (a warning banner — never a silent skip). CI builds Locus and runs them gated with
+> `LOCUS_REQUIRED=1` (the `locus-contract` job), so a missing binary or an excluded tag fails the run.
+> To run them locally: `cd ../locus && cargo build --release`, then `mix test --include locus`.
 
 ## Clustering
 

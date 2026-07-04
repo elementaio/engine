@@ -133,6 +133,46 @@ defmodule Chat.Persistence.PortTest do
             assert {:ok, 1} = @adapter.append(conv, msg("dup"), 0)
           end
         end
+
+        @tag :fence
+        test "CONCURRENCY: at a contested expected_seq, exactly one writer commits" do
+          # The single most load-bearing fence property, and the one a single-process
+          # test cannot see (B13): N writers racing the SAME expected_seq must yield
+          # exactly ONE {:ok} and N-1 {:error, {:fenced, current}}. A read-then-write
+          # fence with no DB-level guard (e.g. no advisory lock / no SELECT … FOR
+          # UPDATE) passes every other test here but FAILS this one — which is exactly
+          # how it should surface before it reaches multi-node production.
+          if function_exported?(@adapter, :append, 3) do
+            conv = new_conv_id()
+            n = 24
+
+            results =
+              1..n
+              |> Task.async_stream(
+                fn i -> @adapter.append(conv, msg("race-#{i}"), 0) end,
+                max_concurrency: n,
+                timeout: 5_000
+              )
+              |> Enum.map(fn {:ok, r} -> r end)
+
+            committed = Enum.filter(results, &match?({:ok, _}, &1))
+            fenced = Enum.filter(results, &match?({:error, {:fenced, _}}, &1))
+
+            assert length(committed) == 1,
+                   "expected exactly one commit at the contested seq, got #{length(committed)}: #{inspect(results)}"
+
+            assert length(fenced) == n - 1,
+                   "expected #{n - 1} fenced writers, got #{length(fenced)}: #{inspect(results)}"
+
+            # The winner took seq 1; the store must reflect exactly that.
+            assert {:ok, 1} = @adapter.latest_seq(conv)
+
+            # A losing write must surface as {:fenced, current} — NOT a generic error
+            # (a generic error would defeat Chat.Conversation's step-down).
+            assert Enum.all?(fenced, &match?({:error, {:fenced, 1}}, &1)),
+                   "fenced writers must report the current seq (1): #{inspect(fenced)}"
+          end
+        end
       end
     end
   end

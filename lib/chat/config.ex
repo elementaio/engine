@@ -34,7 +34,10 @@ defmodule Chat.Config do
     :max_mailbox,
     :max_payload_bytes,
     :offline_push_max_members,
-    :sync_page_max
+    :sync_page_max,
+    :max_pending_gap,
+    :offline_max_inflight,
+    :offline_recheck_ms
   ]
 
   @doc """
@@ -45,7 +48,8 @@ defmodule Chat.Config do
   def validate! do
     problems =
       Enum.flat_map(@ports, &port_problems/1) ++
-        Enum.flat_map(@positive_int_keys, &int_problems/1)
+        Enum.flat_map(@positive_int_keys, &int_problems/1) ++
+        fence_problems()
 
     case problems do
       [] ->
@@ -71,7 +75,31 @@ defmodule Chat.Config do
   @spec valid?() :: boolean()
   def valid? do
     Enum.all?(@ports, fn port -> port_problems(port) == [] end) and
-      Enum.all?(@positive_int_keys, fn key -> int_problems(key) == [] end)
+      Enum.all?(@positive_int_keys, fn key -> int_problems(key) == [] end) and
+      fence_problems() == []
+  end
+
+  # Defense-in-depth (B17): when `:require_fence` is set, refuse to boot on a
+  # persistence adapter that does NOT export the CP fence `append/3`. Split-brain
+  # protection is otherwise a silent fallback to unprotected `append/2`; a body
+  # that intends to run clustered should turn this on so the guarantee is
+  # boot-enforced, not documentation-enforced.
+  defp fence_problems do
+    if Application.get_env(:chat_engine, :require_fence, false) do
+      mod = Application.get_env(:chat_engine, :persistence_adapter)
+
+      if is_atom(mod) and mod != nil and Code.ensure_loaded?(mod) and
+           not function_exported?(mod, :append, 3) do
+        [
+          "#{inspect(mod)} does not export the CP fence append/3, but :require_fence is set " <>
+            "(clustered split-brain protection would silently fall back to unprotected append/2)"
+        ]
+      else
+        []
+      end
+    else
+      []
+    end
   end
 
   # ── Per-port checks ───────────────────────────────────────────────────────────

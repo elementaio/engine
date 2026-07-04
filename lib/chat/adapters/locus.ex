@@ -165,28 +165,32 @@ defmodule Chat.Adapters.Locus do
   defp set_max_cas(_key, _value, 0), do: {:error, :too_much_contention}
 
   defp set_max_cas(key, value, attempts) do
-    result =
-      exclusive(fn run ->
-        with {:ok, [_watch, cur]} <- run.([["WATCH", key], ["GET", key]]) do
-          current = if cur, do: String.to_integer(cur), else: 0
-
-          if value <= current do
-            run.([["UNWATCH"]])
-            :ok
-          else
-            case run.([["MULTI"], ["SET", key, value], ["EXEC"]]) do
-              # EXEC == nil ⇒ the watched key changed under us; retry.
-              {:ok, [_multi, _queued, nil]} -> :retry
-              {:ok, [_multi, _queued, _exec]} -> :ok
-              {:error, reason} -> {:error, reason}
-            end
-          end
-        end
-      end)
-
-    case result do
+    case exclusive(fn run -> cas_max_once(run, key, value) end) do
       :retry -> set_max_cas(key, value, attempts - 1)
       other -> other
+    end
+  end
+
+  # One WATCH/GET → conditional SET pass. Returns :ok, :retry (watched key changed
+  # under us), or {:error, _}.
+  defp cas_max_once(run, key, value) do
+    with {:ok, [_watch, cur]} <- run.([["WATCH", key], ["GET", key]]) do
+      current = if cur, do: String.to_integer(cur), else: 0
+      if value <= current, do: unwatch_ok(run), else: commit_max(run, key, value)
+    end
+  end
+
+  defp unwatch_ok(run) do
+    run.([["UNWATCH"]])
+    :ok
+  end
+
+  defp commit_max(run, key, value) do
+    case run.([["MULTI"], ["SET", key, value], ["EXEC"]]) do
+      # EXEC == nil ⇒ the watched key changed under us; retry.
+      {:ok, [_multi, _queued, nil]} -> :retry
+      {:ok, [_multi, _queued, _exec]} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

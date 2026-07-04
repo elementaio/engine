@@ -47,7 +47,7 @@ defmodule Chat.Presence do
         mons: Map.put(state.mons, ref, {user_id, pid})
     }
 
-    unless was_online, do: broadcast(user_id, :online, nil)
+    unless was_online, do: safe("broadcast_online", fn -> broadcast(user_id, :online, nil) end)
     {:noreply, state}
   end
 
@@ -72,20 +72,59 @@ defmodule Chat.Presence do
             do: Map.delete(state.users, user_id),
             else: Map.put(state.users, user_id, sessions)
 
-        # Only declare the user offline if they have NO sessions left ANYWHERE in
-        # the cluster (other nodes may still hold a session). Exclude the pid that
-        # just died in case :syn hasn't pruned it yet.
-        if locally_offline and not online_elsewhere?(user_id, pid) do
-          ts = System.system_time(:millisecond)
-          Chat.Ports.presence_store().touch(user_id, ts)
-          broadcast(user_id, :offline, ts)
+        cond do
+          not locally_offline ->
+            :ok
+
+          # No local sessions AND none anywhere else in the cluster ⇒ truly offline.
+          not online_elsewhere?(user_id, pid) ->
+            go_offline(user_id, System.system_time(:millisecond))
+
+          # No local sessions, but :syn still shows another node's session. That may
+          # be a real session on a peer OR the peer's own dying pid not yet pruned
+          # (both nodes would otherwise suppress and the user sticks "online" — B9).
+          # Re-check after the prune window: if it's then empty, go offline.
+          true ->
+            schedule_offline_recheck(user_id)
         end
 
         {:noreply, %{state | users: users, mons: mons}}
     end
   end
 
+  # Delayed convergence check (B9): fired after suppression. If the user has no
+  # session anywhere now that :syn has had time to prune, declare them offline.
+  @impl true
+  def handle_info({:recheck_offline, user_id}, state) do
+    unless online?(user_id), do: go_offline(user_id, System.system_time(:millisecond))
+    {:noreply, state}
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────────
+
+  # Record last_seen + broadcast the offline delta. Both touch adapter ports, so
+  # both go through `safe/2` — an adapter raise/exit (e.g. a Locus client call
+  # timeout) must NOT crash Presence and orphan every other session's monitor (B8).
+  defp go_offline(user_id, ts) do
+    safe("touch", fn -> Chat.Ports.presence_store().touch(user_id, ts) end)
+    safe("broadcast_offline", fn -> broadcast(user_id, :offline, ts) end)
+  end
+
+  defp schedule_offline_recheck(user_id) do
+    Process.send_after(self(), {:recheck_offline, user_id}, offline_recheck_ms())
+  end
+
+  defp offline_recheck_ms, do: Application.get_env(:chat_engine, :offline_recheck_ms, 3_000)
+
+  # Run a port-touching side effect; a fault degrades to a logged no-op instead of
+  # taking down the single Presence process (which would drop ALL live monitors).
+  defp safe(label, fun) do
+    fun.()
+  rescue
+    e -> Logger.warning("presence #{label} raised: #{Exception.message(e)}")
+  catch
+    kind, reason -> Logger.warning("presence #{label} #{kind}: #{inspect(reason)}")
+  end
 
   defp broadcast(user_id, status, ts) do
     case Chat.Ports.conversation_store().conversations_for(user_id) do
@@ -99,6 +138,12 @@ defmodule Chat.Presence do
         :ok
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:chat, :presence, :broadcast_error],
+          %{},
+          %{user_id: user_id, reason: reason}
+        )
+
         Logger.warning(
           "presence broadcast skipped (conversations_for #{inspect(user_id)} failed): #{inspect(reason)}"
         )

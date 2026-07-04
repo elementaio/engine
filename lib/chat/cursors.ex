@@ -23,7 +23,14 @@ defmodule Chat.Cursors do
 
       other ->
         # Fall back to 0 (re-deliver from the start; client dedups by id) but make
-        # the store error visible rather than silently resetting the cursor.
+        # the store error visible — telemetry, not just a log: a degraded cursor
+        # store causes fleet-wide redelivery storms and deserves a metric.
+        :telemetry.execute(
+          [:chat, :cursor, :error],
+          %{},
+          %{op: :get, ref: ref, conversation_id: conversation_id, reason: other}
+        )
+
         Logger.warning(
           "cursor get failed (ref=#{inspect(ref)} conv=#{inspect(conversation_id)}): #{inspect(other)}"
         )
@@ -40,7 +47,13 @@ defmodule Chat.Cursors do
 
       {:error, reason} ->
         # Delivery progress may be lost (client re-receives on reconnect) — surface
-        # it instead of pretending success.
+        # it via telemetry (not just a log) instead of pretending success.
+        :telemetry.execute(
+          [:chat, :cursor, :error],
+          %{},
+          %{op: :advance, ref: ref, conversation_id: conversation_id, seq: seq, reason: reason}
+        )
+
         Logger.warning(
           "cursor advance failed (ref=#{inspect(ref)} conv=#{inspect(conversation_id)} seq=#{inspect(seq)}): #{inspect(reason)}"
         )

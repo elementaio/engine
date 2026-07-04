@@ -246,11 +246,25 @@ defmodule Chat.Conversation do
         :ok
 
       mod ->
-        Task.Supervisor.start_child(Chat.TaskSupervisor, Chat.OfflineNotifier, :run, [
-          mod,
-          conversation_id,
-          msg
-        ])
+        case Task.Supervisor.start_child(Chat.TaskSupervisor, Chat.OfflineNotifier, :run, [
+               mod,
+               conversation_id,
+               msg
+             ]) do
+          {:ok, _pid} ->
+            :ok
+
+          # Bounded supervisor is full (slow push/store backend under load): shed
+          # rather than block the single-writer or pile up unbounded tasks. Safe —
+          # the message is already durable, so offline recipients still catch up by
+          # cursor on reconnect; we just skip the proactive push (B7).
+          {:error, reason} ->
+            :telemetry.execute(
+              [:chat, :offline, :shed],
+              %{},
+              %{conversation_id: conversation_id, reason: reason}
+            )
+        end
 
         :ok
     end

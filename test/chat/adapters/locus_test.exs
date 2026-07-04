@@ -11,7 +11,7 @@ defmodule Chat.Adapters.LocusBoot do
   alias Chat.Adapters.Locus
 
   def binary do
-    Path.expand("../locus/target/release/locus", File.cwd!())
+    System.get_env("LOCUS_BIN") || Path.expand("../locus/target/release/locus", File.cwd!())
   end
 
   def ensure do

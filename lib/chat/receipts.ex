@@ -21,6 +21,12 @@ defmodule Chat.Receipts do
         :ok
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:chat, :receipt, :error],
+          %{},
+          %{op: :set_read, conversation_id: conversation_id, user_id: user_id, reason: reason}
+        )
+
         Logger.warning(
           "receipt set_read failed (conv=#{inspect(conversation_id)} user=#{inspect(user_id)}): #{inspect(reason)}"
         )
@@ -42,6 +48,12 @@ defmodule Chat.Receipts do
         {length(readers), Enum.take(readers, @readers_cap)}
 
       {:error, reason} ->
+        :telemetry.execute(
+          [:chat, :receipt, :error],
+          %{},
+          %{op: :read_watermarks, conversation_id: conversation_id, reason: reason}
+        )
+
         Logger.warning(
           "receipt read_watermarks failed (conv=#{inspect(conversation_id)}): #{inspect(reason)}"
         )

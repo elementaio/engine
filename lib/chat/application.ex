@@ -34,10 +34,16 @@ defmodule Chat.Application do
       # One process per connected device.
       {DynamicSupervisor, strategy: :one_for_one, name: Chat.Session.Supervisor},
       # Off-hub best-effort work (e.g. offline push notifications) so the
-      # single-writer conversation owners never block on it.
-      {Task.Supervisor, name: Chat.TaskSupervisor}
+      # single-writer conversation owners never block on it. BOUNDED
+      # (`max_children`) so a slow push/store backend under sustained durable-write
+      # load can't pile up unbounded tasks and exhaust memory/pool (B7); over the
+      # cap, `notify_offline` sheds with telemetry (the message is already durable).
+      {Task.Supervisor, name: Chat.TaskSupervisor, max_children: offline_max_inflight()}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Chat.Supervisor)
   end
+
+  defp offline_max_inflight,
+    do: Application.get_env(:chat_engine, :offline_max_inflight, 10_000)
 end

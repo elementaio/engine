@@ -6,6 +6,73 @@ All notable changes to `chat_engine` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-04
+
+Lead-review assessment hardening (`docs/ASSESSMENT-2026-07.md`) — every confirmed core-side
+finding fixed, each with a regression test. All firewall-legal (stdlib + the `:telemetry` seam).
+
+### Fixed
+- **Silent message loss — the cursor over-advance family (B2/B3/B4/B6).** The per-device delivery
+  cursor now advances **only across the contiguous delivered prefix** (`Session.note_delivered/3`):
+  a delivery whose seq sits above an undelivered gap is buffered and folded in only once the gap
+  closes. So a backpressure-shed delivery, a swallowed catch-up error, an unvalidated client `:read`
+  seq, or a send-ack racing a lower-seq peer deliver can no longer leapfrog the cursor past a message
+  the device never received. A catch-up read error now **stops the session** (clean reconnect from the
+  un-advanced cursor) and emits `[:chat, :session, :catch_up_failed]` instead of logging and going
+  live. `:read` records only the read watermark. An overgrown gap forces a resync.
+- **Membership authorization gap (B1).** New opt-in `enforce_membership: true` gates every
+  conversation-scoped verb (`:send/:read/:sync/:read_state/:typing`) on the store's `member?/2` — so an
+  allow-all `Auth` adapter no longer lets an authenticated user read or write any conversation in its
+  tenant. Fails closed on a store fault; emits `[:chat, :session, :membership_denied]`.
+- **Cross-node size-cache staleness (B5).** `invalidate_size` now routes to the owner node (like every
+  other owner op) instead of a node-local `Registry.lookup`, so a membership change from a non-owner
+  node actually reaches the owner (correct receipt policy, no O(n) receipt storm / read-state leak).
+- **OfflineNotifier task pileup (B7).** The offline-wake `Task.Supervisor` is now bounded
+  (`offline_max_inflight`, default 10k); over the cap it sheds with `[:chat, :offline, :shed]` (the
+  message is already durable) instead of growing unbounded under a slow push/store backend.
+- **Presence single-point-of-failure (B8).** Presence port I/O (`touch`, broadcast) is wrapped so an
+  adapter raise/timeout degrades to a logged no-op instead of crashing Presence and orphaning **every**
+  live session's monitor.
+- **Presence never converging offline across nodes (B9).** A suppressed offline (a peer's not-yet-pruned
+  `:syn` pid) now schedules a delayed re-check (`offline_recheck_ms`, default 3s) that declares offline
+  once `:syn` has converged.
+- **`presence_query` authz slot confusion (B10).** User-targeted actions now authorize on a tagged
+  `{:user, id}` resource, not a bare user id in the `conversation_id` slot.
+- **Uncapped ephemeral fast lane (B11).** `Chat.broadcast_ephemeral/2` now applies the
+  `:max_payload_bytes` cap (returns `{:error, :too_large}`) — it was the only send lane with no size cap.
+- **Overload shedding of `:system` control frames (B14).** Membership-control frames (join/leave/removal)
+  are exempt from backpressure shedding — they are not in the durable log, so a dropped one can't be
+  recovered by catch-up.
+- **`Router.ensure_local/1` non-exhaustive case (B15).** An unexpected `start_child` result no longer
+  raises `CaseClauseError` into the calling session; it degrades to `{:error, {:owner_unreachable, _}}`,
+  and the local owner path is wrapped symmetrically with the remote one.
+
+### Added
+- **Drain-aware placement (B12).** A draining node advertises itself in a cluster-global `:syn` marker
+  (auto-pruned on death); HRW placement excludes it, so its owned conversations pre-migrate to healthy
+  nodes **while it is still up** rather than dying on stop. Falls back to the full node set so placement
+  is never empty.
+- **Graceful-stop primitive (B16).** `Chat.await_drained/2` (+ `Chat.Health.live_session_count/0`) drains
+  then waits for live sessions to disconnect — the primitive for a body's pre-stop hook.
+- **`require_fence: true` boot check (B17).** Refuses to boot clustered on a persistence adapter lacking
+  the `append/3` CP fence, instead of silently falling back to unprotected `append/2`.
+- **Contract-kit concurrency case (B13).** `Chat.Persistence.PortTest` now races N writers at a contested
+  `expected_seq` and asserts exactly one commit + N−1 `{:fenced, current}` — catching a read-then-write
+  fence (no advisory lock / `SELECT … FOR UPDATE`) that every single-process test passes.
+- **Error-path telemetry** on the store-and-forward hinge: `[:chat, :cursor, :error]`,
+  `[:chat, :receipt, :error]`, `[:chat, :presence, :broadcast_error]`,
+  `[:chat, :session, :conversations_for_error]` — previously log-only blind spots.
+- **Gated Locus contract CI lane** (`locus-contract`) that builds Locus and runs the real-adapter
+  durability/fence suite with `LOCUS_REQUIRED=1`; the local suite now **loudly** excludes `:locus` when
+  the binary is absent instead of skipping it silently (test gap #1).
+
+### Notes
+- **Body follow-ups** (out of the firewall, tracked in the assessment): koine's allow-all
+  `Koine.Auth.authorize/3` should consult membership (+ delete its false "engine enforces membership"
+  comment); vox's Ecto `append/3` should hold a `pg_advisory_xact_lock` (or map the unique violation to
+  `{:fenced, current}`) — the new contract-kit concurrency case will now fail until it does. B18 (owner
+  step-down backoff, LOW/PLAUSIBLE) is deferred.
+
 ## [0.3.0] — 2026-07-04
 
 ### Added

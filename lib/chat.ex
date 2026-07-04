@@ -156,21 +156,38 @@ defmodule Chat do
   `inject/2` with a `kind: :ephemeral` message instead when you want ordering
   relative to that conversation's durable stream.
   """
-  @spec broadcast_ephemeral(Types.conversation_id(), Message.t()) :: {:ok, :ephemeral}
+  @spec broadcast_ephemeral(Types.conversation_id(), Message.t()) ::
+          {:ok, :ephemeral} | {:error, :too_large}
   def broadcast_ephemeral(conversation_id, %Message{} = msg) do
-    env = %Envelope{
-      type: :message,
-      conversation_id: conversation_id,
-      id: msg.id,
-      sender_id: msg.sender_id,
-      seq: nil,
-      payload: msg.payload,
-      receipts: false
-    }
+    # The fast lane bypasses the owner GenServer — and therefore the owner's
+    # `check_payload`. Apply the same `:max_payload_bytes` cap here so this isn't
+    # the one uncapped send lane a client can push a 10 MB envelope through (B11).
+    case check_payload(msg) do
+      :ok ->
+        env = %Envelope{
+          type: :message,
+          conversation_id: conversation_id,
+          id: msg.id,
+          sender_id: msg.sender_id,
+          seq: nil,
+          payload: msg.payload,
+          receipts: false
+        }
 
-    Chat.Fanout.dispatch(conversation_id, env, nil)
-    {:ok, :ephemeral}
+        Chat.Fanout.dispatch(conversation_id, env, nil)
+        {:ok, :ephemeral}
+
+      {:error, :too_large} = err ->
+        err
+    end
   end
+
+  defp check_payload(%Message{payload: payload}) when is_binary(payload) do
+    max = Application.get_env(:chat_engine, :max_payload_bytes, 1_048_576)
+    if is_integer(max) and byte_size(payload) > max, do: {:error, :too_large}, else: :ok
+  end
+
+  defp check_payload(_), do: :ok
 
   # ── Health & lifecycle ──────────────────────────────────────────────────────
 
@@ -185,6 +202,15 @@ defmodule Chat do
   @doc "Resume accepting new sessions after a drain."
   @spec resume() :: :ok
   def resume, do: Chat.Health.resume()
+
+  @doc """
+  Graceful-stop helper for a body's pre-stop hook: drain, then wait (up to
+  `timeout_ms`) for live sessions to disconnect. `:ok` when fully drained, or
+  `{:timeout, still_live}`. The body owns the actual shutdown.
+  """
+  @spec await_drained(non_neg_integer(), pos_integer()) :: :ok | {:timeout, non_neg_integer()}
+  def await_drained(timeout_ms \\ 30_000, poll_ms \\ 100),
+    do: Chat.Health.await_drained(timeout_ms, poll_ms)
 
   # ── internals ───────────────────────────────────────────────────────────────
 
@@ -221,7 +247,27 @@ defmodule Chat do
     })
   end
 
+  # Invalidate the owner's cached member_count. The owner lives on its HRW node,
+  # which may not be this one — a node-local Registry lookup would miss it and the
+  # owner would keep a stale size (wrong receipt policy) until restart (B5). Route
+  # to the owner node exactly like every other owner op, then do the local lookup
+  # there. Best-effort (fire-and-forget cast); if no owner is running there is
+  # nothing to invalidate (a fresh owner reads the size on first use).
   defp invalidate_size(conversation_id) do
+    node = Chat.Cluster.owner_node(conversation_id)
+
+    if node == Node.self() do
+      do_invalidate_size(conversation_id)
+    else
+      :erpc.cast(node, __MODULE__, :do_invalidate_size, [conversation_id])
+    end
+
+    :ok
+  end
+
+  @doc false
+  # Runs ON the owner node (directly or via :erpc.cast).
+  def do_invalidate_size(conversation_id) do
     case Registry.lookup(Chat.ConversationRegistry, conversation_id) do
       [{pid, _}] -> GenServer.cast(pid, :invalidate_size)
       [] -> :ok
